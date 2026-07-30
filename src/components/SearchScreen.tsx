@@ -6,6 +6,7 @@ import { SmartSearchFilterBar } from './SmartSearchFilterBar';
 
 interface SearchScreenProps {
   salons: Salon[];
+  salonsLoading?: boolean;
   favorites: string[];
   userCity?: string;
   onToggleFavorite: (salonId: string) => void;
@@ -15,6 +16,7 @@ interface SearchScreenProps {
 
 export const SearchScreen: React.FC<SearchScreenProps> = ({
   salons,
+  salonsLoading = false,
   favorites,
   userCity = 'Jaipur',
   onToggleFavorite,
@@ -61,7 +63,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
         const matchesPrice = s.startingPrice >= selectedMinPrice && s.startingPrice <= selectedMaxPrice;
         
-        const matchesRating = s.rating >= selectedMinRating;
+        const matchesRating = s.rating === 0 || s.rating >= selectedMinRating; // unrated ("New") salons are not hidden by rating filters
 
         const matchesDistance = s.distanceKm <= selectedDistance;
 
@@ -289,7 +291,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
       {/* Results List */}
       <div className="flex flex-col gap-5">
-        {isLoading ? (
+        {isLoading || salonsLoading ? (
           Array.from({ length: 3 }).map((_, i) => <SalonCardSkeleton key={i} />)
         ) : filteredSalons.length > 0 ? (
           filteredSalons.map((salon) => {
@@ -308,13 +310,19 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                     alt={salon.name}
                     className="w-full h-full object-cover"
                   />
-                  <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-md px-2.5 py-1 rounded-full flex items-center gap-1 shadow-sm">
-                    <span className="material-symbols-outlined text-[14px] text-[#e6007e]">
-                      star
-                    </span>
-                    <span className="text-[13px] font-bold text-[#26181c]">{salon.rating}</span>
-                    <span className="text-[11px] font-medium text-[#5a3f47]">({salon.reviewCount ?? salon.reviewsCount})</span>
-                  </div>
+                  {salon.rating > 0 ? (
+                    <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-md px-2.5 py-1 rounded-full flex items-center gap-1 shadow-sm">
+                      <span className="material-symbols-outlined text-[14px] text-[#e6007e]">
+                        star
+                      </span>
+                      <span className="text-[13px] font-bold text-[#26181c]">{salon.rating}</span>
+                      <span className="text-[11px] font-medium text-[#5a3f47]">({salon.reviewCount ?? salon.reviewsCount})</span>
+                    </div>
+                  ) : salon.isNew ? (
+                    <div className="absolute top-3 right-3 bg-emerald-500/95 px-2.5 py-1 rounded-full flex items-center shadow-sm">
+                      <span className="text-[11px] font-bold text-white">New</span>
+                    </div>
+                  ) : null}
 
                   <button
                     onClick={(e) => {
@@ -339,13 +347,17 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                         {salon.name}
                       </h3>
                       <p className="text-[14px] text-[#5a3f47] font-medium mt-0.5 flex items-center gap-1.5 flex-wrap">
-                        <span>{salon.area} • {salon.distanceKm} km</span>
+                        <span>{salon.area}{salon.distanceKm > 0 ? ` • ${salon.distanceKm} km` : ''}</span>
                         <span className="text-[#e0bec6]">•</span>
-                        <span className="inline-flex items-center gap-0.5 text-[#26181c] font-semibold text-[13px]">
-                          <span className="material-symbols-outlined text-[15px] text-amber-500 fill-current">star</span>
-                          {salon.rating}
-                          <span className="text-[12px] font-normal text-[#5a3f47]">({salon.reviewCount ?? salon.reviewsCount} reviews)</span>
-                        </span>
+                        {salon.rating > 0 ? (
+                          <span className="inline-flex items-center gap-0.5 text-[#26181c] font-semibold text-[13px]">
+                            <span className="material-symbols-outlined text-[15px] text-amber-500 fill-current">star</span>
+                            {salon.rating}
+                            <span className="text-[12px] font-normal text-[#5a3f47]">({salon.reviewCount ?? salon.reviewsCount} reviews)</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center text-emerald-600 font-semibold text-[13px]">New</span>
+                        )}
                       </p>
                     </div>
                     <div className="text-right">

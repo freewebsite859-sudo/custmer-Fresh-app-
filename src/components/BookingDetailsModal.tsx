@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Booking } from '../types';
-import { MOCK_SALONS, BANNER_URL } from '../data/mockData';
+import { Booking, Salon } from '../types';
+import { BANNER_URL } from '../data/mockData';
 
 interface BookingDetailsModalProps {
   booking: Booking;
@@ -8,6 +8,7 @@ interface BookingDetailsModalProps {
   onClose: () => void;
   onRebook: (booking: Booking) => void;
   onCancel: (booking: Booking) => void;
+  salons?: Salon[];
 }
 
 export const BookingDetailsModal: React.FC<BookingDetailsModalProps> = ({
@@ -16,6 +17,7 @@ export const BookingDetailsModal: React.FC<BookingDetailsModalProps> = ({
   onClose,
   onRebook,
   onCancel,
+  salons = [],
 }) => {
   const [isRescheduling, setIsRescheduling] = useState(false);
   const [selectedRescheduleDate, setSelectedRescheduleDate] = useState('Fri, 25 Jul');
@@ -25,7 +27,7 @@ export const BookingDetailsModal: React.FC<BookingDetailsModalProps> = ({
   if (!isOpen) return null;
 
   // Find matching salon data for image & avatar details
-  const salonData = MOCK_SALONS.find((s) => s.id === booking.salonId || s.name.toLowerCase() === booking.salonName.toLowerCase());
+  const salonData = salons.find((s) => s.id === booking.salonId || s.name.toLowerCase() === booking.salonName.toLowerCase());
   const salonImage = salonData?.image || BANNER_URL;
   const staffObj = salonData?.staff?.find((st) => st.name === booking.staffName) || salonData?.staff?.[0];
 

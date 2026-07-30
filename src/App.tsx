@@ -3,10 +3,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { supabase, supabaseConfigError } from './lib/supabaseClient';
 import { Screen, Salon, Service, Staff, Booking, UserLocation, AppNotification, ServiceReview, SavedProfessional, SavedService } from './types';
 import {
-  MOCK_SALONS,
   INITIAL_BOOKINGS,
   INITIAL_LOCATION,
 } from './data/mockData';
+import { fetchPublicSalons } from './lib/salonRepository';
 
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
@@ -165,14 +165,36 @@ export default function App() {
   };
 
   const [isAppointmentDismissed, setIsAppointmentDismissed] = useState(false);
-  const [salons] = useState<Salon[]>(MOCK_SALONS);
-  const [selectedSalon, setSelectedSalon] = useState<Salon>(MOCK_SALONS[0]);
-  const [selectedServices, setSelectedServices] = useState<Service[]>([
-    MOCK_SALONS[0].services[0],
-  ]);
-  const [selectedStaff, setSelectedStaff] = useState<Staff | null>(
-    MOCK_SALONS[0].staff[0] || null
-  );
+  const [salons, setSalons] = useState<Salon[]>([]);
+  const [salonsLoading, setSalonsLoading] = useState(true);
+  const [selectedSalon, setSelectedSalon] = useState<Salon | null>(null);
+  const [selectedServices, setSelectedServices] = useState<Service[]>([]);
+  const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null);
+
+  // Live salon discovery: fetched from Supabase once per app load (no mock data).
+  useEffect(() => {
+    let isMounted = true;
+    if (!supabase) {
+      setSalonsLoading(false);
+      return () => {
+        isMounted = false;
+      };
+    }
+    fetchPublicSalons(supabase)
+      .then((data) => {
+        if (isMounted) setSalons(data);
+      })
+      .catch((err) => {
+        console.warn('Salons fetch notice:', err?.message || err);
+        if (isMounted) setSalons([]);
+      })
+      .finally(() => {
+        if (isMounted) setSalonsLoading(false);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const [userLocation, setUserLocation] = useState<UserLocation>(() => {
     const saved = localStorage.getItem('nexora_user_location');
@@ -855,6 +877,7 @@ export default function App() {
             <HomeScreen
               location={userLocation}
               salons={salons}
+              salonsLoading={salonsLoading}
               favorites={favorites}
               recentlyViewed={recentlyViewed}
               bookings={bookings}
@@ -870,6 +893,7 @@ export default function App() {
           {currentScreen === 'search' && (
             <SearchScreen
               salons={salons}
+              salonsLoading={salonsLoading}
               favorites={favorites}
               userCity={userLocation.city}
               onToggleFavorite={handleToggleFavorite}
@@ -878,7 +902,7 @@ export default function App() {
             />
           )}
 
-          {currentScreen === 'salon-detail' && (
+          {currentScreen === 'salon-detail' && selectedSalon && (
             <SalonDetailScreen
               salon={selectedSalon}
               selectedServices={selectedServices}
@@ -893,7 +917,7 @@ export default function App() {
             />
           )}
 
-          {currentScreen === 'checkout' && (
+          {currentScreen === 'checkout' && selectedSalon && (
             <CheckoutScreen
               salon={selectedSalon}
               selectedServices={selectedServices}
@@ -989,6 +1013,7 @@ export default function App() {
                 <HomeScreen
                   location={userLocation}
                   salons={salons}
+                  salonsLoading={salonsLoading}
                   favorites={favorites}
                   recentlyViewed={recentlyViewed}
                   bookings={bookings}

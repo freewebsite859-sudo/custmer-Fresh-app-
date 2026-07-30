@@ -18,33 +18,6 @@ interface SalonDetailScreenProps {
   bookings: Booking[];
 }
 
-const DEFAULT_STYLISTS: Staff[] = [
-  {
-    id: 's1',
-    name: 'Maya S.',
-    role: 'Senior Stylist',
-    rating: 4.9,
-    reviewsCount: 84,
-    avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuB6FnEPu-SL4wCFVKcdUT8T3HAr4WTtQffHbnb-a1Q_KHmwlXmuuMexI_oX7VO3Ck7qecdPxZscnfPyNFROadrFDvlkX2aKpGC7DKv8u_kCOn8d2MGCISl3rqUL79jDHNAaMeiBfwgEUSzl-uZoz702Y0_08nr4fJCuUBFEAasK6fvfIalsfNsECYrq-GqF_jzTRNgR4lOYUXXnfcExQ5qPrfu7Tw6Sle-tPP-le3KXO-hb9dwZ-x-2wkRrIieKF0Y75ikYZ-xFPME',
-  },
-  {
-    id: 's2',
-    name: 'David L.',
-    role: 'Color Specialist',
-    rating: 4.8,
-    reviewsCount: 62,
-    avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAym-1XqNvvUES_juaNcLK1p8qid6RxJWHmLyEsIlb7AZSTPL3DCcTaY--lrpsKfwZwtjvl2FDo7LyVmLuDZb5KGoPI2DvOGefWFzVJnsIXTM2NkLwCvN_xGTXmI3_23Le-KpVYYx4qmB4kzK9QGaBpL0uNx2cigDOD6i19c0NbGXmLIMKy3m7bC9xhY50Odkqojhl7HF4nT9FrV_K_3UJKBBfiUTYnIcThOzvvmaz4DyrB8m0nL0W3-kL4DbP7Oyz_grSdxlUlWHQ',
-  },
-  {
-    id: 's3',
-    name: 'Sarah K.',
-    role: 'Esthetician',
-    rating: 5.0,
-    reviewsCount: 120,
-    avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuB9RAhukgBLye8hQOojgrb3bjsb6PQ_GhdMufuidFvlJqxVZ_xINH0Fdc1_s8l0aKXMACAyJMrQquxZKVQXPbcPnysxo2AAatGH3nEL1rVhgI_0bjqpB9KoTtaO7uJwL42BWgx9jqqZT8lTENQn-lR5HjKB-qPHz60CkRRmoz6LOby9AqVT6YTIEvV8qGyGrD_9L7ajxDuE2iRaPMw8FOg6RbQvHBxMhsSz267is5uVRucT7hdBBpbaVJ93mQq5R3csJlGGpBtEazk',
-  },
-];
-
 export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
   salon,
   selectedServices,
@@ -57,16 +30,7 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
   onToggleFavorite,
   bookings,
 }) => {
-  const availableStaff = React.useMemo(() => {
-    if (salon.staff && salon.staff.length >= 3) {
-      return salon.staff;
-    }
-    const existing = salon.staff || [];
-    const needed = DEFAULT_STYLISTS.filter(
-      (ds) => !existing.some((e) => e.name.toLowerCase().includes(ds.name.split(' ')[0].toLowerCase()) || e.id === ds.id)
-    );
-    return [...existing, ...needed].slice(0, 3);
-  }, [salon.staff]);
+  const availableStaff = salon.staff || [];
 
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [loadingSuggestion, setLoadingSuggestion] = useState(false);
@@ -225,53 +189,7 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
       }
     }
 
-    // Default mock reviews for this salon
-    const defaultSvc0 = salon.services[0]?.name || 'Balayage & Hair Styling';
-    const defaultSvc1 = salon.services[1]?.name || 'Kerastase Hair Spa';
-    const defaultSvc2 = salon.services[2]?.name || 'Organic Hydra Facial';
-
-    return [
-      {
-        id: 'sr-1',
-        salonId: salon.id,
-        serviceName: defaultSvc0,
-        author: 'Ananya Sharma',
-        rating: 5,
-        date: '2 days ago',
-        comment: 'The balayage shade turned out exactly as I envisioned! Gentle bleaching technique with zero brassiness.',
-        verifiedBooking: true,
-      },
-      {
-        id: 'sr-2',
-        salonId: salon.id,
-        serviceName: defaultSvc1,
-        author: 'Priya Mehta',
-        rating: 5,
-        date: '1 week ago',
-        comment: 'Deep scalp massager and steaming treatment was immensely relaxing. My hair feels 10x softer.',
-        verifiedBooking: true,
-      },
-      {
-        id: 'sr-3',
-        salonId: salon.id,
-        serviceName: defaultSvc2,
-        author: 'Rhea Sen',
-        rating: 4.8,
-        date: '2 weeks ago',
-        comment: 'Thorough blackhead extraction and cold-hammer massage. Face is glowing without any redness.',
-        verifiedBooking: true,
-      },
-      {
-        id: 'sr-4',
-        salonId: salon.id,
-        serviceName: defaultSvc0,
-        author: 'Divya Kapoor',
-        rating: 4.9,
-        date: '3 weeks ago',
-        comment: 'Professional colorist who took time to understand my skin tone before recommending the caramel highlights.',
-        verifiedBooking: true,
-      },
-    ];
+    return [];
   });
 
   useEffect(() => {
@@ -296,7 +214,7 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
   const getServiceStats = (serviceName: string) => {
     const matching = serviceReviews.filter((r) => r.serviceName.toLowerCase() === serviceName.toLowerCase());
     if (matching.length === 0) {
-      return { rating: 4.8, count: 5 }; // fallback baseline
+      return { rating: 0, count: 0 }; // no real reviews yet — UI shows "No reviews yet"
     }
     const sum = matching.reduce((acc, r) => acc + r.rating, 0);
     const avg = (sum / matching.length).toFixed(1);
@@ -448,7 +366,7 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
               </div>
               <p className="text-[14px] text-[#5a3f47] flex items-center gap-1 font-medium">
                 <span className="material-symbols-outlined text-[16px] text-[#e6007e]">location_on</span>
-                {salon.distanceKm} km away • {salon.area}
+                {salon.distanceKm > 0 ? `${salon.distanceKm} km away • ` : ''}{salon.area}
               </p>
               
               <div className="flex items-center gap-2 mt-1 flex-wrap">
@@ -475,14 +393,21 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
               </div>
             </div>
 
-            {/* Rating Badge */}
-            <div className="flex flex-col items-center bg-[#fce2e7] rounded-2xl p-2.5 shrink-0 min-w-[60px] border border-[#fde7f3]">
-              <div className="flex items-center gap-1 text-[#26181c]">
-                <span className="text-[18px] font-bold">{salon.rating}</span>
-                <span className="material-symbols-outlined text-[16px] text-amber-500">star</span>
+            {/* Rating Badge — only real ratings; live salons without reviews show "New" */}
+            {salon.rating > 0 ? (
+              <div className="flex flex-col items-center bg-[#fce2e7] rounded-2xl p-2.5 shrink-0 min-w-[60px] border border-[#fde7f3]">
+                <div className="flex items-center gap-1 text-[#26181c]">
+                  <span className="text-[18px] font-bold">{salon.rating}</span>
+                  <span className="material-symbols-outlined text-[16px] text-amber-500">star</span>
+                </div>
+                <span className="text-[10px] font-medium text-[#5a3f47]">({salon.reviewCount ?? salon.reviewsCount} reviews)</span>
               </div>
-              <span className="text-[10px] font-medium text-[#5a3f47]">({salon.reviewCount ?? salon.reviewsCount} reviews)</span>
-            </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center bg-emerald-50 rounded-2xl p-2.5 shrink-0 min-w-[60px] border border-emerald-200">
+                <span className="text-[13px] font-bold text-emerald-600">New</span>
+                <span className="text-[9px] font-medium text-[#5a3f47] mt-0.5">salon</span>
+              </div>
+            )}
           </div>
 
           {/* Special Offers Banner */}
@@ -705,11 +630,17 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
 
                                   {/* Service Rating & Review Action Bar */}
                                   <div className="mt-3 pt-2.5 border-t border-slate-200/60 flex items-center justify-between text-[11px]">
-                                    <div className="flex items-center gap-1.5 bg-[#fff0f3] px-2.5 py-1 rounded-lg border border-[#fcd5e8]">
-                                      <span className="material-symbols-outlined text-[14px] text-amber-500">star</span>
-                                      <span className="font-extrabold text-[#26181c]">{stats.rating}</span>
-                                      <span className="text-[#8c7077] font-medium">({stats.count} reviews)</span>
-                                    </div>
+                                    {stats.count > 0 ? (
+                                      <div className="flex items-center gap-1.5 bg-[#fff0f3] px-2.5 py-1 rounded-lg border border-[#fcd5e8]">
+                                        <span className="material-symbols-outlined text-[14px] text-amber-500">star</span>
+                                        <span className="font-extrabold text-[#26181c]">{stats.rating}</span>
+                                        <span className="text-[#8c7077] font-medium">({stats.count} reviews)</span>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                                        <span className="text-[11px] font-semibold text-emerald-600">No reviews yet</span>
+                                      </div>
+                                    )}
 
                                     <button
                                       onClick={() => openReviewForService(service.id)}
@@ -940,15 +871,17 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-center gap-1 mt-2.5 bg-[#fde7f3]/60 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-[#fcd5e8]/50 w-full">
-                        <span className="material-symbols-outlined text-[12px] sm:text-[14px] text-amber-500 fill-current">star</span>
-                        <span className="text-[10px] sm:text-[11px] text-[#26181c] font-bold">
-                          {member.rating}
-                        </span>
-                        <span className="text-[9px] sm:text-[10px] text-[#8c7077]">
-                          ({member.reviewsCount})
-                        </span>
-                      </div>
+                      {member.reviewsCount > 0 && (
+                        <div className="flex items-center justify-center gap-1 mt-2.5 bg-[#fde7f3]/60 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-[#fcd5e8]/50 w-full">
+                          <span className="material-symbols-outlined text-[12px] sm:text-[14px] text-amber-500 fill-current">star</span>
+                          <span className="text-[10px] sm:text-[11px] text-[#26181c] font-bold">
+                            {member.rating}
+                          </span>
+                          <span className="text-[9px] sm:text-[10px] text-[#8c7077]">
+                            ({member.reviewsCount})
+                          </span>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

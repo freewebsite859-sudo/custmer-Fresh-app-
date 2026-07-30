@@ -11,6 +11,7 @@ import { NexoraLeaderboardSection } from './NexoraLeaderboardSection';
 interface HomeScreenProps {
   location: UserLocation;
   salons: Salon[];
+  salonsLoading?: boolean;
   favorites: string[];
   recentlyViewed?: string[];
   bookings?: Booking[];
@@ -37,6 +38,7 @@ const CATEGORY_MAPPING: Record<string, string[]> = {
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   location,
   salons,
+  salonsLoading = false,
   favorites,
   recentlyViewed = [],
   bookings,
@@ -258,12 +260,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         reasons.push(`📍 In ${salon.city}`);
       }
 
-      if (salon.distanceKm <= 1.5) {
+      if (salon.distanceKm > 0 && salon.distanceKm <= 1.5) {
         score += 25;
         if (!reasons.some((r) => r.startsWith('📍'))) {
           reasons.push(`📍 Only ${salon.distanceKm} km away`);
         }
-      } else if (salon.distanceKm <= 3.0) {
+      } else if (salon.distanceKm > 0 && salon.distanceKm <= 3.0) {
         score += 15;
       }
 
@@ -307,9 +309,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         salon,
         score,
         matchPercentage,
-        primaryReason: reasons[0] || `📍 ${salon.distanceKm} km in ${salon.area}`,
-        secondaryReason: reasons[1] || `⭐ ${salon.rating}★ (${salon.reviewCount || 100}+ reviews)`,
-        isLocationMatch: areaMatch || salon.distanceKm <= 2.0,
+        primaryReason: reasons[0] || `📍 ${salon.area}`,
+        secondaryReason: reasons[1] || (salon.reviewCount > 0 ? `⭐ ${salon.rating}★ (${salon.reviewCount}+ reviews)` : '✨ New on Nexora'),
+        isLocationMatch: areaMatch || (salon.distanceKm > 0 && salon.distanceKm <= 2.0),
         isCategoryMatch: hasCategoryMatch,
         isTopRated: salon.rating >= 4.8,
       };
@@ -1055,14 +1057,20 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                           </h3>
                           <p className="text-[11px] text-[#5a3f47] flex items-center gap-1 mt-0.5">
                             <span className="material-symbols-outlined text-[13px] text-[#e6007e]">location_on</span>
-                            {salon.area} • {salon.distanceKm} km
+                            {salon.area}{salon.distanceKm > 0 ? ` • ${salon.distanceKm} km` : ''}
                           </p>
                         </div>
 
-                        <div className="flex items-center gap-1 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 shrink-0">
-                          <span className="material-symbols-outlined text-[13px] text-amber-500">star</span>
-                          <span className="text-[11px] font-extrabold text-[#26181c]">{salon.rating}</span>
-                        </div>
+                        {salon.rating > 0 ? (
+                          <div className="flex items-center gap-1 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 shrink-0">
+                            <span className="material-symbols-outlined text-[13px] text-amber-500">star</span>
+                            <span className="text-[11px] font-extrabold text-[#26181c]">{salon.rating}</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 shrink-0">
+                            <span className="text-[11px] font-extrabold text-emerald-600">New</span>
+                          </div>
+                        )}
                       </div>
 
                       <p className="text-[10px] text-[#8c7077] line-clamp-1 italic">
@@ -1116,7 +1124,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
 
         <div className="grid grid-cols-1 gap-6">
-          {isLoading ? (
+          {isLoading || salonsLoading ? (
             Array.from({ length: 4 }).map((_, i) => <SalonCardSkeleton key={i} />)
           ) : (
             <AnimatePresence>
@@ -1190,17 +1198,23 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                             <p className="text-[14px] text-[#5a3f47] flex items-center gap-1 mt-0.5">
                               <span className="material-symbols-outlined text-[16px] text-[#e6007e]">location_on</span>
                               <span className="truncate">
-                                {salon.distanceKm} km • {salon.area}
+                                {salon.distanceKm > 0 ? `${salon.distanceKm} km • ` : ''}{salon.area}
                               </span>
                             </p>
                           </div>
 
                           <div className="flex flex-col items-end">
-                            <div className="flex items-center gap-1 bg-[#ffe8ed] py-1 px-2 rounded-lg">
-                              <span className="material-symbols-outlined text-[16px] text-amber-500">star</span>
-                              <span className="text-[13px] text-[#26181c] font-bold">{salon.rating}</span>
-                            </div>
-                            <span className="text-[11px] text-[#8c7077] mt-0.5">({salon.reviewCount ?? salon.reviewsCount}+ reviews)</span>
+                            {salon.rating > 0 ? (
+                              <>
+                                <div className="flex items-center gap-1 bg-[#ffe8ed] py-1 px-2 rounded-lg">
+                                  <span className="material-symbols-outlined text-[16px] text-amber-500">star</span>
+                                  <span className="text-[13px] text-[#26181c] font-bold">{salon.rating}</span>
+                                </div>
+                                <span className="text-[11px] text-[#8c7077] mt-0.5">({salon.reviewCount ?? salon.reviewsCount}+ reviews)</span>
+                              </>
+                            ) : (
+                              <span className="text-[11px] font-semibold text-emerald-600 mt-0.5">New on Nexora</span>
+                            )}
                           </div>
                         </div>
 

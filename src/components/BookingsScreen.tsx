@@ -406,6 +406,7 @@ export const BookingsScreen: React.FC<BookingsScreenProps> = ({
       {selectedBooking && (
         <BookingDetailsModal
           booking={selectedBooking}
+          salons={salons}
           isOpen={!!selectedBooking}
           onClose={() => setSelectedBooking(null)}
           onCancel={(booking) => {
