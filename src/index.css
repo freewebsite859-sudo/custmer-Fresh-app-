@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --color-primary: #8e004b;
+    --color-primary-pink: #e6007e;
+    --color-secondary-pink: #fde7f3;
+    --color-background: #fff8f8;
+    --color-surface: #fff8f8;
+    --color-surface-off-white: #fcf9f8;
+    --color-surface-container: #ffe8ed;
+    --color-surface-container-high: #fce2e7;
+    --color-surface-container-highest: #f6dce2;
+    --color-surface-container-low: #fff0f2;
+    --color-surface-container-lowest: #ffffff;
+    --color-on-surface: #26181c;
+    --color-on-surface-variant: #5a3f47;
+    --color-outline: #8c7077;
+    --color-outline-variant: #e0bec6;
+    --color-outline-subtle: #e8e8e8;
+  }
+
+  body {
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+    font-family: 'Inter', sans-serif;
+    background-color: var(--color-background);
+    color: var(--color-on-surface);
+  }
+
+
+  /* Hide scrollbar for IE, Edge and Firefox */
+  .hide-scrollbar,
+  .no-scrollbar,
+  .scrollbar-none {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+
+  .no-scrollbar::-webkit-scrollbar,
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.mb-safe {
+  margin-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.bottom-safe {
+  bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+@keyframes scan {
+  0% {
+    top: 0%;
+  }
+  50% {
+    top: 100%;
+  }
+  100% {
+    top: 0%;
+  }
+}
+
+.animate-scan {
+  animation: scan 3s ease-in-out infinite;
+}

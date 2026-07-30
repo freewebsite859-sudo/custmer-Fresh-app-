@@ -1,0 +1,6 @@
+{
+  "name": "Nexora Luxury Salon Booking",
+  "description": "Premium luxury salon and spa booking platform with real-time slot selection, location discovery, curated treatments, and appointment management.",
+  "requestFramePermissions": ["geolocation", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
