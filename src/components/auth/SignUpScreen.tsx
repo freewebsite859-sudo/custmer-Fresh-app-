@@ -55,6 +55,10 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
     }
 
     try {
+      if (!supabase) {
+        alert('Authentication is unavailable because the app is not configured.');
+        return;
+      }
       const { data, error } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,

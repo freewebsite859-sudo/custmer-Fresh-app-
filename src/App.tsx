@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import type { User, Session } from '@supabase/supabase-js';
-import { supabase } from './lib/supabaseClient';
+import { supabase, supabaseConfigError } from './lib/supabaseClient';
 import { Screen, Salon, Service, Staff, Booking, UserLocation, AppNotification, ServiceReview, SavedProfessional, SavedService } from './types';
 import {
   MOCK_SALONS,
@@ -37,7 +36,7 @@ import { InstallApp } from './components/InstallApp';
 import { Modal } from './components/Modal';
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authScreen, setAuthScreen] = useState<'login' | 'signup' | 'role-conflict'>('login');
   const [conflictRole, setConflictRole] = useState<string | null>(null);
@@ -45,13 +44,22 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
+    if (!supabase) {
+      setAuthLoading(false);
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    const client = supabase;
+
     // Reads the real profile record and enforces the locked role contract:
     // access only when platform_role === 'customer' AND is_active === true.
     const verifyCustomerAccess = async (
-      authUser: User
+      authUser: { id: string }
     ): Promise<{ allowed: boolean; role: string | null }> => {
       const readRole = async (): Promise<string | null> => {
-        const { data: profile, error } = await supabase
+        const { data: profile, error } = await client
           .from('profiles')
           .select('platform_role, is_active')
           .eq('id', authUser.id)
@@ -73,7 +81,7 @@ export default function App() {
       return { allowed: role === 'customer', role };
     };
 
-    const applySession = async (session: Session | null) => {
+    const applySession = async (session: { user?: any } | null) => {
       if (!isMounted) return;
       const authUser = session?.user ?? null;
       if (!authUser) {
@@ -95,14 +103,23 @@ export default function App() {
         setUser(null);
         setConflictRole(role);
         setAuthScreen('role-conflict');
-        await supabase.auth.signOut();
+        await client.auth.signOut();
       }
       setAuthLoading(false);
     };
 
     try {
-      supabase.auth.getSession()
-        .then(({ data }) => applySession(data.session))
+      client.auth.getSession()
+        .then(({ data, error }) => {
+          if (isMounted) {
+            if (error) {
+              setUser(null);
+              setAuthLoading(false);
+              return;
+            }
+            void applySession(data?.session ?? null);
+          }
+        })
         .catch((err) => {
           console.warn('Supabase auth notice:', err?.message || err);
           if (isMounted) {
@@ -111,7 +128,7 @@ export default function App() {
           }
         });
 
-      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      const { data } = client.auth.onAuthStateChange((_event, session) => {
         if (isMounted) {
           void applySession(session);
         }
@@ -124,7 +141,6 @@ export default function App() {
     } catch (e) {
       console.warn('Supabase init notice:', e);
       if (isMounted) {
-        setUser(null);
         setAuthLoading(false);
       }
     }
@@ -710,6 +726,18 @@ export default function App() {
     currentScreen === 'settings';
   const unreadCount = notifications.filter((n) => !n.read).length;
 
+  if (supabaseConfigError) {
+    return (
+      <div className="min-h-screen bg-[#fff8f8] text-[#26181c] flex items-center justify-center p-6">
+        <div className="w-full max-w-md rounded-2xl border border-rose-200 bg-white p-6 text-center shadow-sm">
+          <span className="material-symbols-outlined mb-3 text-4xl text-rose-600">settings_alert</span>
+          <h1 className="mb-2 text-xl font-bold">Configuration required</h1>
+          <p className="text-sm leading-6 text-[#5a3f47]">{supabaseConfigError}</p>
+        </div>
+      </div>
+    );
+  }
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-[#fff8f8] text-[#26181c] flex flex-col items-center justify-center p-6 text-center">
@@ -938,9 +966,9 @@ export default function App() {
             <SettingsScreen
               onBack={handleBack}
               onNavigate={(s) => setCurrentScreen(s)}
-              onLogout={() => {
-                supabase.auth.signOut();
-                setCurrentScreen('welcome');
+              onLogout={async () => {
+                setUser(null);
+                await supabase?.auth.signOut();
               }}
             />
           )}

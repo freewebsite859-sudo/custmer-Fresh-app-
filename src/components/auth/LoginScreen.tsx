@@ -16,6 +16,10 @@ export const LoginScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}
     setErrorMsg(null);
     setIsLoading(true);
     try {
+      if (!supabase) {
+        setErrorMsg('Authentication is unavailable because the app is not configured.');
+        return;
+      }
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) {
         if (error.message?.toLowerCase().includes('rate') || error.status === 429) {
@@ -33,20 +37,28 @@ export const LoginScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}
 
   const handleGoogleLogin = async () => {
     try {
+      if (!supabase) {
+        setErrorMsg('Authentication is unavailable because the app is not configured.');
+        return;
+      }
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
       });
       if (error) {
-        setErrorMsg('Google login could not be completed. Please try again.');
+        setErrorMsg('Google login could not be started. Please try again.');
       }
     } catch (err) {
-      setErrorMsg('Google login could not be completed. Please try again.');
+      setErrorMsg('Google login could not be started. Please try again.');
     }
   };
 
   const handleForgotPassword = async () => {
     if (!email) {
       alert('Please enter your email address first.');
+      return;
+    }
+    if (!supabase) {
+      alert('Authentication is unavailable because the app is not configured.');
       return;
     }
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
@@ -183,6 +195,7 @@ export const LoginScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}
               </svg>
               Continue with Google
             </button>
+
           </div>
         </form>
 
