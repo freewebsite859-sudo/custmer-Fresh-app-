@@ -31,10 +31,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onContinue }) => {
       setEmailError('Enter a valid email address');
       return;
     }
-    if (authMode === 'login' && password !== 'password123') {
-      setEmailError('Email or password is incorrect.');
-      return;
-    }
+    // No credential simulation here: real authentication happens only on the
+    // dedicated Supabase-backed Login/SignUp screens before this onboarding
+    // screen can ever render.
     setEmailError(null);
     onContinue();
   };
@@ -144,13 +143,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onContinue }) => {
               >
                 Create Account
               </button>
-
-              <button
-                onClick={onContinue}
-                className="mt-2 text-[#5a3f47] font-semibold text-[14px] underline-offset-4 hover:underline active:opacity-70 transition-opacity text-center py-2 cursor-pointer"
-              >
-                Continue as Guest
-              </button>
             </div>
 
             <p className="text-center text-[12px] text-[#8c7077] mt-6 leading-relaxed">
@@ -239,7 +231,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onContinue }) => {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter password (e.g., password123)"
+                  placeholder="Enter password"
                   className="w-full h-[50px] bg-transparent pl-11 pr-12 rounded-2xl text-xs text-[#26181c] font-medium placeholder:text-[#8c7077]/60 focus:outline-none"
                 />
                 <button

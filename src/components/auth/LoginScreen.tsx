@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { Eye, EyeOff } from 'lucide-react';
 import { WELCOME_BG_URL, LOGO_SQUARE } from '../../data/mockData';
 
-export const LoginScreen: React.FC<{onToggleAuth: () => void; onGuestLogin?: () => void}> = ({onToggleAuth, onGuestLogin}) => {
+export const LoginScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -19,13 +19,13 @@ export const LoginScreen: React.FC<{onToggleAuth: () => void; onGuestLogin?: () 
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) {
         if (error.message?.toLowerCase().includes('rate') || error.status === 429) {
-          setErrorMsg('Auth rate limit reached. You can click "Explore as Guest" below.');
+          setErrorMsg('Auth rate limit reached. Please wait a moment and try again.');
         } else {
-          setErrorMsg('Invalid credentials. You can also explore as Guest.');
+          setErrorMsg('Invalid credentials. Please check your email and password.');
         }
       }
     } catch (err: any) {
-      setErrorMsg('Login request failed. Click "Explore as Guest" to proceed.');
+      setErrorMsg('Login request failed. Please check your connection and try again.');
     } finally {
       setIsLoading(false);
     }
@@ -37,10 +37,10 @@ export const LoginScreen: React.FC<{onToggleAuth: () => void; onGuestLogin?: () 
         provider: 'google',
       });
       if (error) {
-        if (onGuestLogin) onGuestLogin();
+        setErrorMsg('Google login could not be completed. Please try again.');
       }
     } catch (err) {
-      if (onGuestLogin) onGuestLogin();
+      setErrorMsg('Google login could not be completed. Please try again.');
     }
   };
 
@@ -183,17 +183,6 @@ export const LoginScreen: React.FC<{onToggleAuth: () => void; onGuestLogin?: () 
               </svg>
               Continue with Google
             </button>
-
-            {onGuestLogin && (
-              <button
-                onClick={onGuestLogin}
-                className="w-full bg-white text-[#26181c] rounded-xl py-3.5 font-bold hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 active:scale-[0.98] border border-[#e8e8e8] shadow-2xs"
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[18px] text-[#e6007e]">explore</span>
-                Explore as Guest
-              </button>
-            )}
           </div>
         </form>
 

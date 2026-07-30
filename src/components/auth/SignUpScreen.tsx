@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { Eye, EyeOff } from 'lucide-react';
 import { WELCOME_BG_URL, LOGO_SQUARE } from '../../data/mockData';
 
-export const SignUpScreen: React.FC<{onToggleAuth: () => void, onConflict?: () => void}> = ({onToggleAuth, onConflict}) => {
+export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}) => {
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
@@ -29,13 +29,7 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void, onConflict?: () =
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    
-    if (formData.email === 'conflict@nexora.com' && onConflict) {
-      onConflict();
-      setIsLoading(false);
-      return;
-    }
-    
+
     if (!formData.fullName || !formData.email || !formData.mobile) {
       alert('Please fill in all fields.');
       setIsLoading(false);
@@ -68,23 +62,32 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void, onConflict?: () =
           data: {
             full_name: formData.fullName,
             mobile: formData.mobile,
+            signup_role: 'customer',
           },
         },
       });
 
       if (error) {
-        alert('Sign up note: ' + (error.message || 'Please try again or continue as guest.'));
+        alert('Sign up note: ' + (error.message || 'Please try again.'));
       } else {
         if (data.user) {
           try {
-            await supabase.from('profiles').insert({
-              id: data.user.id,
-              full_name: formData.fullName,
-              email: formData.email,
-              mobile: formData.mobile
-            });
+            // Create or update the matching profile under the locked role
+            // contract: one email = one permanent role ('customer' here).
+            await supabase.from('profiles').upsert(
+              {
+                id: data.user.id,
+                full_name: formData.fullName,
+                email: formData.email,
+                mobile: formData.mobile,
+                platform_role: 'customer',
+                is_active: true,
+              },
+              { onConflict: 'id' }
+            );
           } catch (pe) {
-            // ignore profile insert fail
+            // Best effort only: the backend signup_role trigger is the
+            // authoritative profile creator when RLS blocks a pre-session upsert.
           }
         }
         alert('Registration submitted! Check your email for confirmation link.');
@@ -157,10 +160,6 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void, onConflict?: () =
             {isLoading && <span className="material-symbols-outlined animate-spin text-xl">progress_activity</span>}
             {isLoading ? 'Creating Account...' : 'Sign Up'}
           </button>
-          
-          <p className="text-[10px] text-center text-[#8c7077] mt-2 italic">
-            Try "conflict@nexora.com" to see role conflict screen
-          </p>
         </form>
 
         <div className="mt-8 text-center pb-8 pb-safe">

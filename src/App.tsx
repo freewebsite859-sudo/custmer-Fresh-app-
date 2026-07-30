@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import type { User, Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabaseClient';
 import { Screen, Salon, Service, Staff, Booking, UserLocation, AppNotification, ServiceReview, SavedProfessional, SavedService } from './types';
 import {
@@ -36,37 +37,83 @@ import { InstallApp } from './components/InstallApp';
 import { Modal } from './components/Modal';
 
 export default function App() {
-  const [user, setUser] = useState<any>(() => {
-    return { id: 'guest-user', email: 'guest@nexora.app' };
-  });
-  const [authLoading, setAuthLoading] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [authScreen, setAuthScreen] = useState<'login' | 'signup' | 'role-conflict'>('login');
+  const [conflictRole, setConflictRole] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
 
+    // Reads the real profile record and enforces the locked role contract:
+    // access only when platform_role === 'customer' AND is_active === true.
+    const verifyCustomerAccess = async (
+      authUser: User
+    ): Promise<{ allowed: boolean; role: string | null }> => {
+      const readRole = async (): Promise<string | null> => {
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('platform_role, is_active')
+          .eq('id', authUser.id)
+          .maybeSingle();
+        if (error || !profile) return null;
+        if (profile.platform_role === 'customer' && profile.is_active === true) {
+          return 'customer';
+        }
+        return profile.platform_role ?? 'unsupported';
+      };
+
+      let role = await readRole();
+      if (role === null) {
+        // A brand-new signup can briefly precede its profile row; retry once
+        // before treating the account as missing/unsupported.
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        role = await readRole();
+      }
+      return { allowed: role === 'customer', role };
+    };
+
+    const applySession = async (session: Session | null) => {
+      if (!isMounted) return;
+      const authUser = session?.user ?? null;
+      if (!authUser) {
+        // No session (or session expired/removed): always return to login.
+        setUser(null);
+        setAuthLoading(false);
+        return;
+      }
+
+      const { allowed, role } = await verifyCustomerAccess(authUser);
+      if (!isMounted) return;
+
+      if (allowed) {
+        setConflictRole(null);
+        setUser(authUser);
+      } else {
+        // Block non-customer, inactive or role-less accounts and end the
+        // session so a refresh always returns to a safe auth screen.
+        setUser(null);
+        setConflictRole(role);
+        setAuthScreen('role-conflict');
+        await supabase.auth.signOut();
+      }
+      setAuthLoading(false);
+    };
+
     try {
       supabase.auth.getSession()
-        .then(({ data }) => {
-          if (isMounted) {
-            if (data?.session?.user) {
-              setUser(data.session.user);
-            }
-            setAuthLoading(false);
-          }
-        })
+        .then(({ data }) => applySession(data.session))
         .catch((err) => {
           console.warn('Supabase auth notice:', err?.message || err);
           if (isMounted) {
+            setUser(null);
             setAuthLoading(false);
           }
         });
 
       const { data } = supabase.auth.onAuthStateChange((_event, session) => {
         if (isMounted) {
-          if (session?.user) {
-            setUser(session.user);
-          }
+          void applySession(session);
         }
       });
 
@@ -77,6 +124,7 @@ export default function App() {
     } catch (e) {
       console.warn('Supabase init notice:', e);
       if (isMounted) {
+        setUser(null);
         setAuthLoading(false);
       }
     }
@@ -672,22 +720,22 @@ export default function App() {
   }
 
   if (!user) {
-    if (authScreen === 'login') {
+    if (authScreen === 'role-conflict') {
       return (
-        <LoginScreen 
-          onToggleAuth={() => setAuthScreen('signup')} 
-          onGuestLogin={() => setUser({ id: 'guest-user', email: 'guest@nexora.app' })} 
+        <RoleAssignedConflict
+          existingRole={conflictRole ?? undefined}
+          onLogin={() => setAuthScreen('login')}
+          onUseAnotherEmail={() => setAuthScreen('signup')}
+          onContactSupport={() => setCurrentScreen('support')}
         />
       );
     }
     if (authScreen === 'signup') {
-      return <SignUpScreen onToggleAuth={() => setAuthScreen('login')} onConflict={() => setAuthScreen('role-conflict')} />;
+      return <SignUpScreen onToggleAuth={() => setAuthScreen('login')} />;
     }
     return (
-      <RoleAssignedConflict 
-        onLogin={() => setAuthScreen('login')}
-        onUseAnotherEmail={() => setAuthScreen('signup')}
-        onContactSupport={() => setCurrentScreen('support')}
+      <LoginScreen
+        onToggleAuth={() => setAuthScreen('signup')}
       />
     );
   }
