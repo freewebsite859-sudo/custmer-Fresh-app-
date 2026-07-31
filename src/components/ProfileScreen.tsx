@@ -301,6 +301,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     tempCity: string,
     tempArea: string
   ) => {
+    // 1. Validation
     if (!tempName.trim()) {
       setNameError('Full Name is required');
       return;
@@ -310,8 +311,43 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       return;
     }
     setNameError(null);
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!tempEmail.trim() || !emailRegex.test(tempEmail.trim())) {
+      triggerToast('Please enter a valid email address.');
+      return;
+    }
+
+    const cleanedPhone = tempPhone.replace(/\s+/g, '');
+    if (cleanedPhone && cleanedPhone !== '+91' && cleanedPhone.length !== 13) {
+      triggerToast('Phone number must be a valid 10-digit number.');
+      return;
+    }
+
     setIsSavingProfile(true);
 
+    // 2. Integration with Supabase user metadata & email update
+    if (supabase) {
+      try {
+        const { error: authError } = await supabase.auth.updateUser({
+          email: tempEmail.trim().toLowerCase(),
+          data: {
+            full_name: tempName.trim(),
+            mobile: tempPhone.trim() || null,
+          }
+        });
+
+        if (authError) {
+          triggerToast(authError.message || 'Failed to update credentials.');
+          setIsSavingProfile(false);
+          return;
+        }
+      } catch (authException: any) {
+        console.warn('Auth update exception:', authException);
+      }
+    }
+
+    // 3. Database profiles table update
     const patch: ProfilePatch = {
       full_name: tempName.trim(),
       phone: tempPhone.trim() || null,
@@ -331,7 +367,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     setIsSavingProfile(false);
     if (synced) {
       setIsEditOpen(false);
-      triggerToast('Profile saved & synced!');
+
+      const emailChanged = tempEmail.trim().toLowerCase() !== email.toLowerCase();
+      if (emailChanged) {
+        triggerToast('Profile updated! Please check your new email to confirm the change. 📧');
+      } else {
+        triggerToast('Profile saved & synced! ✨');
+      }
     } else {
       triggerToast('Could not sync profile — please try again.');
     }
@@ -620,7 +662,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <div className="bg-[#fff8f8] rounded-2xl p-4 border border-[#e0bec6]/40 flex flex-col gap-4 relative overflow-hidden w-full">
               <div className="flex flex-col gap-1.5 w-full"><label className="text-[12px] font-bold text-[#594047] ml-1 block w-full" htmlFor="fullName">Full Name</label><div className="relative flex items-center w-full"><span className="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-[#8c7077] text-[20px] pointer-events-none z-10">person</span><input id="fullName" type="text" value={editFormName} onChange={(e) => setEditFormName(e.target.value)} className={`w-full h-12 bg-white text-[14px] font-medium text-[#26181c] rounded-xl pl-11 pr-4 py-2.5 border focus:outline-none focus:ring-2 focus:ring-[#b90064] transition-all ${nameError ? 'border-red-500' : 'border-[#e8e8e8]'}`} placeholder="Rahul Sharma" /></div></div>
               <div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#594047] ml-1" htmlFor="mobile">Mobile Number</label><div className="relative flex items-center"><span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#8c7077] text-[20px] pointer-events-none">phone_iphone</span><div className="absolute left-11 top-1/2 -translate-y-1/2 flex items-center text-[14px] text-[#26181c] pointer-events-none"><span>+91</span><div className="w-px h-5 bg-[#e8e8e8] mx-2"></div></div><input id="mobile" type="tel" value={editFormPhone.replace('+91 ', '')} onChange={(e) => setEditFormPhone(`+91 ${e.target.value.replace(/[^0-9]/g, '')}`)} className="w-full h-12 bg-white text-[14px] text-[#26181c] rounded-xl pl-24 pr-4 border border-[#e8e8e8] focus:outline-none focus:ring-2 focus:ring-[#b90064] transition-all" placeholder="98765 43210" /></div></div>
-              <div className="flex flex-col gap-1.5"><div className="flex justify-between items-center ml-1"><label className="text-[12px] font-bold text-[#594047]">Email Address</label><div className="bg-[#E8F5E9] text-[#2E7D32] px-2 py-0.5 rounded-full text-[10px] font-extrabold tracking-wide uppercase">Verified</div></div><div className="relative flex items-center"><span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#8c7077] text-[20px] pointer-events-none">mail</span><input type="email" value={email} readOnly className="w-full h-12 bg-[#ffe8ed]/30 text-[14px] text-[#594047] rounded-xl pl-11 pr-11 border border-[#e8e8e8] opacity-70 cursor-not-allowed" /><span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-[#8c7077] text-[18px]">lock</span></div></div>
+              <div className="flex flex-col gap-1.5"><div className="flex justify-between items-center ml-1"><label className="text-[12px] font-bold text-[#594047]">Email Address</label><div className="bg-[#E8F5E9] text-[#2E7D32] px-2 py-0.5 rounded-full text-[10px] font-extrabold tracking-wide uppercase">Active</div></div><div className="relative flex items-center"><span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#8c7077] text-[20px] pointer-events-none">mail</span><input type="email" value={editFormEmail} onChange={(e) => setEditFormEmail(e.target.value)} className="w-full h-12 bg-white text-[14px] text-[#26181c] rounded-xl pl-11 pr-4 border border-[#e8e8e8] focus:outline-none focus:ring-2 focus:ring-[#b90064] transition-all" placeholder="name@domain.com" /></div></div>
             </div>
             <div className="bg-white rounded-2xl p-4 border border-[#e8e8e8] flex flex-col gap-4 shadow-xs">
               <div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#594047] ml-1">Date of Birth</label><div className="relative flex items-center"><span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#8c7077] text-[20px]">calendar_month</span><input type="date" value={editFormDob} onChange={(e) => setEditFormDob(e.target.value)} className="w-full h-12 bg-[#fcf9f8] text-[14px] rounded-xl pl-11 pr-4 border border-[#e8e8e8] focus:outline-none focus:ring-2 focus:ring-[#b90064]" /></div></div>
