@@ -43,70 +43,10 @@ self.addEventListener('sync', (event) => {
 });
 
 async function syncAppointments() {
-  try {
-    console.log('[SW] Background sync: Fetching updated bookings...');
-    
-    // In a real production app, this would be a real fetch call:
-    // const response = await fetch('/api/bookings');
-    // const bookings = await response.json();
-    
-    // Simulating fresh data from server for the demo
-    const mockBookings = [
-      {
-        id: 'bk-102',
-        salonId: 'glam-room',
-        salonName: 'The Glam Room',
-        services: [{ id: 's2', name: 'Beard Styling', price: 499, duration: 30 }],
-        staff: { id: 'st2', name: 'Arjun K.', role: 'Expert' },
-        date: '2026-07-29',
-        timeSlot: '2:30 PM',
-        status: 'confirmed',
-        totalPrice: 499,
-        timestamp: Date.now()
-      }
-    ];
-
-    // Persist to IndexedDB
-    const db = await openDB('nexora-db', 1);
-    const tx = db.transaction('nexora_bookings', 'readwrite');
-    const store = tx.objectStore('nexora_bookings');
-    
-    for (const booking of mockBookings) {
-      store.put(booking);
-    }
-    
-    await new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-
-    // Notify UI via BroadcastChannel
-    const broadcast = new BroadcastChannel('app-sync');
-    broadcast.postMessage({ 
-      type: 'SYNC_COMPLETE',
-      data: mockBookings,
-      timestamp: Date.now()
-    });
-    
-    console.log('[SW] Sync complete: UI notified');
-  } catch (error) {
-    console.error('[SW] Sync failed:', error);
-  }
-}
-
-// Helper to open IndexedDB
-function openDB(name, version) {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(name, version);
-    request.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains('nexora_bookings')) {
-        db.createObjectStore('nexora_bookings', { keyPath: 'id' });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
+  // Customer bookings live server-side (Supabase) and the app reads them with the
+  // user's session. No offline booking payload is fabricated here; when a real
+  // customer bookings read endpoint exists, this can sync genuine data.
+  console.log('[SW] Background sync: nothing to apply — server is the source of truth.');
 }
 
 // Message Event Handler for direct sync

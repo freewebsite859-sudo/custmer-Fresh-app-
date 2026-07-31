@@ -158,31 +158,26 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       price: number;
       durationMinutes: number;
       salon: Salon;
-      bookingsThisWeek: number;
       rating: number;
-      badgeText: string;
     }> = [];
 
     salons.forEach((salon) => {
       salon.services.forEach((service) => {
         const isPopular = salon.rating >= 4.6;
         if (isPopular && list.length < 6) {
-          const fakeWeeklyBookings = Math.floor(140 + service.price * 0.08 + salon.reviewCount * 0.3);
           list.push({
             serviceName: service.name,
             category: service.category || salon.tags[0] || 'Beauty',
             price: service.price,
             durationMinutes: service.durationMinutes || 45,
             salon,
-            bookingsThisWeek: fakeWeeklyBookings,
             rating: salon.rating,
-            badgeText: fakeWeeklyBookings > 220 ? '🔥 Hot Demand' : '⭐ Top Choice',
           });
         }
       });
     });
 
-    return list.sort((a, b) => b.bookingsThisWeek - a.bookingsThisWeek);
+    return list.sort((a, b) => b.rating - a.rating);
   }, [salons]);
 
   // Compute user preferred service categories from past bookings
@@ -601,13 +596,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <p className="text-[11px] text-[#5a3f47]">
                   {topTab === 'frequent'
                     ? 'Analyzed from your booking history for 1-click rebooking'
-                    : `Most popular treatments in ${location.area} this week`}
+                    : 'Top rated treatments near you'}
                 </p>
               </div>
             </div>
 
             <span className="text-[10px] font-extrabold uppercase px-2.5 py-1 rounded-full bg-[#fff0f3] text-[#e6007e] border border-[#fcd5e8] shrink-0">
-              {topTab === 'frequent' ? 'History Insights' : 'Popular Now'}
+              {topTab === 'frequent' ? 'History Insights' : 'Top Rated'}
             </span>
           </div>
 
@@ -770,6 +765,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               exit="exit"
               className="flex gap-3 overflow-x-auto pt-2 pb-1 scrollbar-none -mx-4 px-4 sm:-mx-5 sm:px-5 scroll-smooth snap-x snap-mandatory"
             >
+              {trendingTreatments.length === 0 && (
+                <div className="w-full shrink-0 flex flex-col items-center justify-center text-center py-8 px-6 gap-2">
+                  <span className="material-symbols-outlined text-[28px] text-[#e0bec6]">trending_up</span>
+                  <p className="text-[13px] font-semibold text-[#8c7077] leading-5">
+                    Trending services will appear here once salons near you gather customer ratings.
+                  </p>
+                </div>
+              )}
               {trendingTreatments.map((item, idx) => (
                 <motion.div
                   key={`${item.serviceName}-${idx}`}
@@ -791,10 +794,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   <div className="flex flex-col gap-1.5">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-extrabold uppercase bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-200">
-                        {item.badgeText}
-                      </span>
-                      <span className="text-[10px] text-[#e6007e] font-extrabold flex items-center gap-0.5">
-                        🔥 {item.bookingsThisWeek}+
+                        ⭐ {item.rating.toFixed(1)} Rated
                       </span>
                     </div>
 

@@ -49,56 +49,7 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({
         console.error(e);
       }
     }
-    return [
-      {
-        id: 'NX-TK-105',
-        subject: 'Reschedule slot issues',
-        category: 'Booking',
-        status: 'OPEN',
-        date: 'Jul 24, 2026',
-        messages: [
-          {
-            sender: 'user',
-            text: 'I scheduled a Balayage treatment at Aura Premium Salon for tomorrow at 11:00 AM, but I need to push it to 2:00 PM. The app says the slot is occupied but the salon is empty.',
-            time: 'Jul 24, 04:00 PM',
-          },
-          {
-            sender: 'executive',
-            text: 'Hi Priya! Let me check the real-time availability of Aura Premium Salon. We are seeing a block on their end, but let me call them directly to open up the 2:00 PM slot for you.',
-            time: 'Jul 24, 04:15 PM',
-          },
-        ],
-      },
-      {
-        id: 'NX-TK-104',
-        subject: 'Double payment for Aura Booking',
-        category: 'Payment',
-        status: 'RESOLVED',
-        date: 'Jul 23, 2026',
-        messages: [
-          {
-            sender: 'user',
-            text: 'Hey, my transaction failed on the first try but the money was deducted. I had to pay again to confirm the appointment. Please refund the first transaction.',
-            time: 'Jul 23, 10:15 AM',
-          },
-          {
-            sender: 'executive',
-            text: 'Hi Priya, we are extremely sorry for the inconvenience. We have verified the duplicate payment of ₹1,499 in our systems. We have initiated an automatic refund to your source account. It should reflect in your bank account in 3-5 business days.',
-            time: 'Jul 23, 11:30 AM',
-          },
-          {
-            sender: 'user',
-            text: 'Awesome, thank you for the speedy response!',
-            time: 'Jul 23, 11:45 AM',
-          },
-          {
-            sender: 'executive',
-            text: 'You are very welcome, Priya! I will mark this ticket as resolved. Feel free to open a new one if you have any other questions. Have a fabulous salon session!',
-            time: 'Jul 23, 12:00 PM',
-          },
-        ],
-      },
-    ];
+    return [];
   });
 
   // Track expanded FAQ items
@@ -188,7 +139,7 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({
         },
         {
           sender: 'executive',
-          text: `Hi Priya! Thank you for raising this. We have registered your ticket under category "${newCategory}" and our customer service specialist has been assigned to help you with "${newSubject}". We will review and reply within 15 minutes!`,
+          text: `This is an automated acknowledgement from Nexora Assistant. Your ticket "${newSubject}" has been saved under category "${newCategory}". Replies from our team will appear in this chat.`,
           time: 'Just now',
         },
       ],
@@ -232,11 +183,11 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({
       };
     });
 
-    // Simulate agent auto-reply
+    // Automated acknowledgement (labelled as such — no human-agent claims)
     setTimeout(() => {
       const systemReply: TicketMessage = {
         sender: 'executive',
-        text: "Thanks for the update. I'm actively reviewing your message and will provide an update shortly. Your convenience is our highest priority!",
+        text: "Nexora Assistant (automated): your reply has been added to the ticket.",
         time: 'Just now',
       };
 

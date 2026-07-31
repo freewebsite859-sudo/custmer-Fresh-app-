@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Screen } from '../types';
-import { LOGO_URL, AVATAR_URL } from '../data/mockData';
+import { LOGO_URL } from '../data/mockData';
 
 import { OfflineSyncStatus } from './OfflineSyncStatus';
 
@@ -107,7 +107,7 @@ export const Header: React.FC<HeaderProps> = ({
             aria-label="Profile Settings"
           >
             <img
-              src={userAvatar || AVATAR_URL}
+              src={userAvatar || '/avatars/avatar-1.png'}
               alt="User Profile Avatar"
               className="w-8 h-8 rounded-full object-cover border border-[#e0bec6]"
             />

@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { AVATAR_URL } from '../data/mockData';
 import { JAIPUR_LOCATIONS } from '../data/locations';
 import { supabase } from '../lib/supabaseClient';
 import { Screen, UserLocation, Booking, Address } from '../types';
@@ -66,10 +65,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   }, []);
 
   // Local states for customer profile
-  const [name, setName] = useState<string>(() => localStorage.getItem('profile_name') || 'Priya Sharma');
-  const [email, setEmail] = useState<string>(() => localStorage.getItem('profile_email') || 'priya.sharma@example.com');
+  const [name, setName] = useState<string>(() => localStorage.getItem('profile_name') || 'Customer');
+  const [email, setEmail] = useState<string>(() => localStorage.getItem('profile_email') || '');
   const [phone, setPhone] = useState<string>(() => localStorage.getItem('profile_phone') || '+91 98765 43210');
-  const [avatar, setAvatar] = useState<string>(() => localStorage.getItem('profile_avatar') || AVATAR_URL);
+  const [avatar, setAvatar] = useState<string>(() => localStorage.getItem('profile_avatar') || '/avatars/avatar-1.png');
   const [selectedLanguage, setSelectedLanguage] = useState<string>(() => localStorage.getItem('profile_language') || 'English');
   const [remindersEnabled, setRemindersEnabled] = useState<boolean>(() => localStorage.getItem('reminders_enabled') !== 'false');
   const [autoPlayAmbiance, setAutoPlayAmbiance] = useState<boolean>(() => localStorage.getItem('autoplay_ambiance') === 'true');
@@ -1103,7 +1102,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setEditFormAvatar(AVATAR_URL)}
+                  onClick={() => setEditFormAvatar('/avatars/avatar-1.png')}
                   className="text-[11px] text-[#594047] font-semibold px-3 py-1.5 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
                 >
                   Remove
@@ -1137,7 +1136,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     className={`w-full h-12 bg-white text-[14px] font-medium text-[#26181c] rounded-xl pl-11 pr-4 py-2.5 border focus:outline-none focus:ring-2 focus:ring-[#b90064] transition-all box-border ${
                       nameError ? 'border-red-500 ring-2 ring-red-100' : 'border-[#e8e8e8]'
                     }`}
-                    placeholder="e.g. Priya Sharma"
+                    placeholder="e.g. Vijay K. Sharma"
                   />
                 </div>
                 {nameError && (
@@ -1577,7 +1576,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               {[
                 { icon: 'trending_up', title: '1.5x Rewards Multiplier', desc: 'Earn 15 points per ₹100 instead of 10 points.' },
                 { icon: 'star', title: 'Free Hair Spa Add-on', desc: 'Complimentary herbal spa with haircuts above ₹1200.' },
-                { icon: 'speed', title: 'Priority Waitlist Support', desc: 'Instant confirmations on high-demand holiday slots.' },
+                { icon: 'speed', title: 'Priority Booking Support', desc: 'Instant confirmations on high-demand holiday slots.' },
                 { icon: 'person_celebrate', title: 'Birthday Pamper Voucher', desc: 'Flat ₹500 off on any service during your birthday week.' },
               ].map((b, i) => (
                 <div key={i} className="flex gap-3 items-start p-2.5 rounded-xl border border-rose-50 hover:bg-rose-50/40 transition-colors">

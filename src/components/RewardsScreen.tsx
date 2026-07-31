@@ -111,37 +111,22 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
   const [redeemedDiscount, setRedeemedDiscount] = useState<number | null>(null);
   const [redeemedPointsSpent, setRedeemedPointsSpent] = useState<number>(0);
 
-  // Expiring Rewards
-  const [expiringRewards] = useState([
-    { id: 'exp-1', name: '20% off Facials', expiryDate: '2 Days' },
-    { id: 'exp-2', name: 'Free Express Hair Styling', expiryDate: '1 Week' },
-  ]);
+  // Expiring Rewards — none fabricated; populated from real offers when available
+  const [expiringRewards] = useState<Array<{ id: string; name: string; expiryDate: string }>>([]);
 
   // Leaderboard State
   const [leaderboardTimeframe, setLeaderboardTimeframe] = useState<'all_time' | 'this_month' | 'weekly'>('all_time');
 
   // Referral State
-  const [userReferralCode, setUserReferralCode] = useState('GLOW-PRIYA-8921');
-  const [bonusReferralPoints, setBonusReferralPoints] = useState<number>(1000); // 2 previous successful signups x 500
-  const [referralsList, setReferralsList] = useState<ReferralItem[]>([
-    {
-      id: 'ref-1',
-      name: 'Ananya Sharma',
-      status: 'Completed',
-      pointsEarned: 500,
-      date: '20 Jul 2026',
-    },
-    {
-      id: 'ref-2',
-      name: 'Rohan Mehta',
-      status: 'Completed',
-      pointsEarned: 500,
-      date: '12 Jul 2026',
-    },
-  ]);
+  const [userReferralCode] = useState(() => {
+    const raw = (localStorage.getItem('profile_name') || 'GUEST').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 8) || 'GUEST';
+    let hash = 0;
+    for (const ch of raw) hash = (hash * 31 + ch.charCodeAt(0)) % 9000;
+    return `GLOW-${raw}-${String(1000 + hash)}`;
+  });
+  const [bonusReferralPoints] = useState<number>(0);
+  const [referralsList] = useState<ReferralItem[]>([]);
 
-  const [simulatedFriendName, setSimulatedFriendName] = useState('');
-  const [showSimulateModal, setShowSimulateModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Total active/confirmed bookings count
@@ -149,11 +134,11 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
   const totalBookingsCount = validBookings.length;
 
   // Calculate total points dynamically (Base + Bookings + Referral Bonuses - Spent)
-  const basePoints = 1200;
+  const basePoints = 0; // no free starting balance — points come from real activity only
   const bookingPoints = totalBookingsCount * 625;
   const calculatedPoints = Math.max(0, basePoints + bookingPoints + bonusReferralPoints - redeemedPointsSpent);
 
-  const referralLink = `https://nexora.app/invite/${userReferralCode}`;
+  const referralLink = `${window.location.origin}/invite/${userReferralCode}`;
 
   // Compute Current Tier & Progress
   const getTierDetails = (count: number) => {
@@ -191,74 +176,13 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
 
   const { currentTier, nextTier, progressPercent, bookingsNeeded } = getTierDetails(totalBookingsCount);
 
-  // Leaderboard Community Mock Dataset
-  const baseCommunityMembers: LeaderboardMember[] = [
-    {
-      id: 'usr-1',
-      name: 'Meera Singhania',
-      pointsAllTime: 8450,
-      pointsMonthly: 2400,
-      pointsWeekly: 1200,
-      bookings: 14,
-      tier: 'Platinum',
-      avatarBg: 'bg-amber-500 text-white border-amber-300',
-    },
-    {
-      id: 'usr-2',
-      name: 'Kavya Nair',
-      pointsAllTime: 5900,
-      pointsMonthly: 1800,
-      pointsWeekly: 850,
-      bookings: 9,
-      tier: 'Gold',
-      avatarBg: 'bg-[#e6007e] text-white border-pink-200',
-    },
-    {
-      id: 'usr-3',
-      name: 'Tanya Verma',
-      pointsAllTime: 4100,
-      pointsMonthly: 1250,
-      pointsWeekly: 600,
-      bookings: 6,
-      tier: 'Gold',
-      avatarBg: 'bg-purple-600 text-white border-purple-300',
-    },
-    {
-      id: 'usr-4',
-      name: 'Rhea Roy',
-      pointsAllTime: 2850,
-      pointsMonthly: 900,
-      pointsWeekly: 450,
-      bookings: 4,
-      tier: 'Silver',
-      avatarBg: 'bg-slate-700 text-white border-slate-300',
-    },
-    {
-      id: 'usr-5',
-      name: 'Sanya Malhotra',
-      pointsAllTime: 1800,
-      pointsMonthly: 550,
-      pointsWeekly: 250,
-      bookings: 3,
-      tier: 'Silver',
-      avatarBg: 'bg-emerald-600 text-white border-emerald-300',
-    },
-    {
-      id: 'usr-6',
-      name: 'Diya Patel',
-      pointsAllTime: 950,
-      pointsMonthly: 300,
-      pointsWeekly: 150,
-      bookings: 1,
-      tier: 'Bronze',
-      avatarBg: 'bg-amber-800 text-white border-amber-600',
-    },
-  ];
+  // Community leaderboard — real data requires backend (deferred); honest empty state until then
+  const baseCommunityMembers: LeaderboardMember[] = [];
 
   // Current Logged-in User Profile in Leaderboard
   const currentUserMember: LeaderboardMember = {
     id: 'priya-current-user',
-    name: `${localStorage.getItem('profile_name') || 'Priya Sharma'} (You)`,
+    name: `${localStorage.getItem('profile_name') || 'Customer'} (You)`,
     pointsAllTime: calculatedPoints,
     pointsMonthly: Math.floor(calculatedPoints * 0.7),
     pointsWeekly: Math.floor(calculatedPoints * 0.4),
@@ -310,32 +234,7 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  const handleSimulateFriendSignup = (e: React.FormEvent) => {
-    e.preventDefault();
-    const friendName = simulatedFriendName.trim() || 'Aarav Patel';
-    const newBonus = 500;
 
-    const newRef: ReferralItem = {
-      id: `ref-${Date.now()}`,
-      name: friendName,
-      status: 'Completed',
-      pointsEarned: newBonus,
-      date: 'Today',
-    };
-
-    setReferralsList((prev) => [newRef, ...prev]);
-    setBonusReferralPoints((prev) => prev + newBonus);
-    setSimulatedFriendName('');
-    setShowSimulateModal(false);
-    triggerToast(`🎉 ${friendName} signed up using your link! You both earned +500 Glow Points!`);
-  };
-
-  const generateNewCode = () => {
-    const randomNum = Math.floor(1000 + Math.random() * 9000);
-    const newCode = `GLOW-PRIYA-${randomNum}`;
-    setUserReferralCode(newCode);
-    triggerToast(`Generated new referral code: ${newCode}`);
-  };
 
   return (
     <div className="flex flex-col w-full max-w-md mx-auto gap-6 pb-40 pt-2 animate-in fade-in relative">
@@ -386,9 +285,13 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
             <span className="text-sm font-semibold text-white/80">pts</span>
           </div>
           <div className="flex items-center gap-2 text-[10px] text-white/80 mt-1 font-medium">
-            <span>Base & Bookings: {basePoints + bookingPoints} pts</span>
-            <span>•</span>
-            <span className="text-amber-200 font-bold">Referral Bonus: +{bonusReferralPoints} pts</span>
+            <span>Bookings: {bookingPoints} pts</span>
+            {bonusReferralPoints > 0 && (
+              <>
+                <span>•</span>
+                <span className="text-amber-200 font-bold">Referral Bonus: +{bonusReferralPoints} pts</span>
+              </>
+            )}
           </div>
         </div>
 
@@ -457,6 +360,9 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
            <span className="material-symbols-outlined text-red-500 text-[18px]">alarm</span>
            Upcoming Expiry
         </h3>
+        {expiringRewards.length === 0 && (
+          <p className="text-[12px] text-[#8c7077] font-medium">No rewards expiring right now.</p>
+        )}
         {expiringRewards.map(reward => (
           <div key={reward.id} className="flex justify-between items-center text-xs p-3 bg-red-50/50 rounded-xl border border-red-100">
              <span className="font-semibold text-red-900">{reward.name}</span>
@@ -534,7 +440,9 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
                 </span>
               </div>
               <p className="text-[11px] text-amber-200/90 font-medium mt-0.5">
-                {currentUserRank === 1
+                {currentUserRank === 1 && activeLeaderboard.length === 1
+                  ? '🏆 You are the first member on this board — book services to grow your points!'
+                  : currentUserRank === 1
                   ? '🏆 You are in 1st Place! Champion of Nexora Salon!'
                   : userAhead
                   ? `Only ${pointsToCatchUp} points behind #${currentUserRank - 1} ${userAhead.name.split(' ')[0]}!`
@@ -543,14 +451,14 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
             </div>
           </div>
 
-          <button
-            onClick={() => setShowSimulateModal(true)}
-            className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-[#26181c] rounded-xl text-xs font-extrabold transition-all shrink-0 cursor-pointer shadow-xs flex items-center gap-1 active:scale-95"
-          >
-            <span className="material-symbols-outlined text-[14px]">bolt</span>
-            Climb Board
-          </button>
+
         </div>
+
+        {baseCommunityMembers.length === 0 && (
+          <p className="text-[12px] text-[#8c7077] font-medium bg-[#fcf9f8] border border-[#f0d8e2] rounded-xl p-3">
+            Community rankings will appear here as more clients join and book through Nexora.
+          </p>
+        )}
 
         {/* TOP 3 PODIUM DISPLAY */}
         {top3Members.length >= 3 && (
@@ -706,13 +614,7 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
             <span className="text-[11px] font-bold uppercase tracking-wider text-[#8e004b]">
               Your Unique Referral Link
             </span>
-            <button
-              onClick={generateNewCode}
-              className="text-[11px] text-[#e6007e] font-bold hover:underline flex items-center gap-1 cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[13px]">refresh</span>
-              Regenerate Code
-            </button>
+
           </div>
 
           <div className="flex items-center gap-2 bg-[#f8eff3] p-2.5 rounded-xl border border-[#ebd2de]">
@@ -785,13 +687,7 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
             </div>
           </div>
 
-          <button
-            onClick={() => setShowSimulateModal(true)}
-            className="px-3.5 py-2 bg-[#e6007e] text-white rounded-xl text-xs font-bold shadow-sm hover:bg-[#c9006e] transition-all cursor-pointer flex items-center gap-1"
-          >
-            <span className="material-symbols-outlined text-[16px]">person_add</span>
-            Simulate Referral
-          </button>
+
         </div>
 
         {/* Referrals List */}
@@ -802,6 +698,11 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
           </div>
 
           <div className="space-y-2">
+            {referralsList.length === 0 && (
+              <p className="text-[12px] text-[#8c7077] font-medium bg-white rounded-xl p-3 border border-[#f0d8e2]">
+                No referrals yet — share your code above; rewards appear here when friends join.
+              </p>
+            )}
             {referralsList.map((item) => (
               <div
                 key={item.id}
@@ -979,66 +880,6 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
       </section>
 
       {/* SIMULATE REFERRAL SIGNUP MODAL */}
-      {showSimulateModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-[100] flex items-center justify-center p-4 animate-in fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl border border-[#f0d8e2]">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-[#e6007e] text-[24px]">person_add</span>
-                <h3 className="text-[18px] font-bold text-[#26181c]">Simulate Friend Referral</h3>
-              </div>
-              <button
-                onClick={() => setShowSimulateModal(false)}
-                className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200"
-              >
-                <span className="material-symbols-outlined text-[18px]">close</span>
-              </button>
-            </div>
-
-            <p className="text-xs text-[#5a3f47] mb-4">
-              Test the referral flow! Enter a friend's name who signed up using link{' '}
-              <span className="font-mono text-[#8e004b]">{userReferralCode}</span> to simulate a booking. Both of you will get +500 points!
-            </p>
-
-            <form onSubmit={handleSimulateFriendSignup} className="space-y-4">
-              <div>
-                <label className="text-xs font-bold text-[#26181c] block mb-1">
-                  Friend's Name
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Simrit Kapoor"
-                  value={simulatedFriendName}
-                  onChange={(e) => setSimulatedFriendName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs text-[#26181c] focus:outline-none focus:border-[#e6007e]"
-                />
-              </div>
-
-              <div className="bg-[#fff0f3] p-3 rounded-xl border border-[#fcd5e8] flex items-center justify-between text-xs">
-                <span className="text-[#5a3f47]">Referral Reward:</span>
-                <span className="font-extrabold text-[#e6007e]">+500 Glow Points</span>
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowSimulateModal(false)}
-                  className="flex-1 py-2.5 bg-slate-100 text-slate-700 text-xs font-bold rounded-xl"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 bg-[#e6007e] text-white text-xs font-bold rounded-xl shadow-sm hover:bg-[#c9006e]"
-                >
-                  Complete Referral
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* Redeem Points Modal */}
       {showRedeemModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-[100] flex items-center justify-center p-4 animate-in fade-in">

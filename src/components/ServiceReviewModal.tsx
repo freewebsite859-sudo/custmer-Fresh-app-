@@ -21,7 +21,7 @@ export const ServiceReviewModal: React.FC<ServiceReviewModalProps> = ({
   const [selectedServiceId, setSelectedServiceId] = useState<string>('');
   const [rating, setRating] = useState<number>(5);
   const [hoverRating, setHoverRating] = useState<number>(0);
-  const [author, setAuthor] = useState<string>(() => localStorage.getItem('profile_name') || 'Priya Sharma');
+  const [author, setAuthor] = useState<string>(() => localStorage.getItem('profile_name') || 'Customer');
   const [comment, setComment] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [submittedSuccess, setSubmittedSuccess] = useState<boolean>(false);
@@ -192,7 +192,7 @@ export const ServiceReviewModal: React.FC<ServiceReviewModalProps> = ({
                 type="text"
                 value={author}
                 onChange={(e) => setAuthor(e.target.value)}
-                placeholder="e.g. Priya Sharma"
+                placeholder="Your display name"
                 className="w-full p-2.5 bg-white border border-[#f3d3e2] rounded-xl text-xs text-[#26181c] focus:outline-none focus:ring-2 focus:ring-[#e6007e]/50"
               />
             </div>

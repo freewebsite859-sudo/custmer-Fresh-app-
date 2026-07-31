@@ -184,7 +184,7 @@ export const BookingDetailsModal: React.FC<BookingDetailsModalProps> = ({
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-[10px] uppercase font-extrabold text-[#8c7077] tracking-wider">Stylist</p>
-                <p className="text-[14px] font-bold text-[#26181c] truncate">{booking.staffName || staffObj?.name || 'Priya Sharma'}</p>
+                <p className="text-[14px] font-bold text-[#26181c] truncate">{booking.staffName || staffObj?.name || 'Salon Team'}</p>
               </div>
             </div>
 

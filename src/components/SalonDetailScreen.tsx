@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Salon, Service, Staff, ServiceReview, WaitlistEntry, Booking } from '../types';
+import { Salon, Service, Staff, ServiceReview, Booking } from '../types';
 import { ServiceReviewModal } from './ServiceReviewModal';
-import { WaitlistModal } from './WaitlistModal';
 import { MiniCalendar } from './MiniCalendar';
 import { ServiceItemSkeleton, Skeleton } from './Skeleton';
 
@@ -63,15 +62,13 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
   const [initialReviewRating, setInitialReviewRating] = useState<number | undefined>(undefined);
   const [selectedServiceFilter, setSelectedServiceFilter] = useState<string>('all');
 
-  // Waitlist States
-  const [isWaitlistModalOpen, setIsWaitlistModalOpen] = useState<boolean>(false);
-  const [waitlistTargetSlot, setWaitlistTargetSlot] = useState<{ slot: string; dateStr: string } | null>(null);
+
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
     const today = new Date();
     // Default to today
     return today;
   });
-  const [waitlistAlertToast, setWaitlistAlertToast] = useState<string | null>(null);
+
 
   // Service Category Filter & Accordion States
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
@@ -128,57 +125,6 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
     { time: '06:30 PM', isAvailable: false, period: 'Evening' },
   ];
 
-  const [waitlistEntries, setWaitlistEntries] = useState<WaitlistEntry[]>(() => {
-    const saved = localStorage.getItem('nexora_waitlist_entries');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed parsing waitlist entries', e);
-      }
-    }
-    return [
-      {
-        id: 'wl-demo-1',
-        salonId: salon.id,
-        salonName: salon.name,
-        serviceNames: [salon.services[0]?.name || 'Balayage & Styling'],
-        dateStr: 'Wed 24 Jul',
-        timeSlot: '09:00 AM',
-        clientName: localStorage.getItem('profile_name') || 'Priya Sharma',
-        clientPhone: localStorage.getItem('profile_phone') || '+91 98765 43210',
-        notificationPreference: 'both',
-        createdAt: Date.now() - 3600000,
-        position: 1,
-        status: 'ACTIVE',
-      },
-    ];
-  });
-
-  useEffect(() => {
-    localStorage.setItem('nexora_waitlist_entries', JSON.stringify(waitlistEntries));
-  }, [waitlistEntries]);
-
-  const handleOpenWaitlistModal = (slotTime: string) => {
-    setWaitlistTargetSlot({ slot: slotTime, dateStr: currentSlotDateStr });
-    setIsWaitlistModalOpen(true);
-  };
-
-  const handleJoinWaitlistSuccess = (newEntry: WaitlistEntry) => {
-    setWaitlistEntries((prev) => [newEntry, ...prev.filter((e) => e.id !== newEntry.id)]);
-  };
-
-  const handleSimulateOpening = (entry: WaitlistEntry) => {
-    setWaitlistAlertToast(`🔔 WAITLIST ALERT: A spot opened up for ${entry.timeSlot} on ${entry.dateStr} at ${entry.salonName}! Click Book Now before it fills.`);
-
-    setWaitlistEntries((prev) =>
-      prev.map((e) => (e.id === entry.id ? { ...e, status: 'NOTIFIED' } : e))
-    );
-  };
-
-  const handleRemoveWaitlist = (entryId: string) => {
-    setWaitlistEntries((prev) => prev.filter((e) => e.id !== entryId));
-  };
 
   const [serviceReviews, setServiceReviews] = useState<ServiceReview[]>(() => {
     const saved = localStorage.getItem(`nexora_service_reviews_${salon.id}`);
@@ -247,38 +193,6 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
         initialRating={initialReviewRating}
         onSubmitReview={handleAddReview}
       />
-
-      {/* Waitlist Modal */}
-      <WaitlistModal
-        isOpen={isWaitlistModalOpen}
-        onClose={() => setIsWaitlistModalOpen(false)}
-        salon={salon}
-        timeSlot={waitlistTargetSlot?.slot || '09:00 AM'}
-        dateStr={waitlistTargetSlot?.dateStr || currentSlotDateStr}
-        selectedServicesSummary={selectedServices.map((s) => s.name).join(', ')}
-        onJoinSuccess={handleJoinWaitlistSuccess}
-      />
-
-      {/* Waitlist Cancellation Alert Toast */}
-      {waitlistAlertToast && (
-        <div className="fixed top-18 inset-x-4 z-50 bg-[#26181c] text-white p-3.5 rounded-2xl shadow-2xl border-2 border-[#e6007e] flex items-start justify-between gap-3 animate-in slide-in-from-top max-w-md mx-auto">
-          <div className="flex gap-2.5">
-            <span className="material-symbols-outlined text-amber-400 text-[24px] shrink-0 animate-bounce">
-              notifications_active
-            </span>
-            <div className="text-xs">
-              <p className="font-bold text-amber-300">Waitlist Alert!</p>
-              <p className="text-slate-200 mt-0.5 leading-snug">{waitlistAlertToast}</p>
-            </div>
-          </div>
-          <button
-            onClick={() => setWaitlistAlertToast(null)}
-            className="text-slate-400 hover:text-white p-1 cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[18px]">close</span>
-          </button>
-        </div>
-      )}
 
       {/* Top Header Back Bar */}
 
@@ -461,8 +375,7 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
                   : 'text-[#5a3f47] hover:text-[#26181c]'
               }`}
             >
-              Slots & Waitlist
-              <span className="absolute -top-1 -right-0.5 w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+              Slots
             </button>
             <button
               onClick={() => setActiveTab('staff')}
@@ -669,13 +582,13 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
             </div>
           )}
 
-          {/* Slots & Waitlist Tab */}
+          {/* Slots Tab */}
           {activeTab === 'slots' && (
             <div className="flex flex-col gap-5 animate-in fade-in">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-[18px] font-bold text-[#26181c]">Appointment Time Slots</h3>
-                  <p className="text-[11px] text-[#5a3f47]">Select an available slot or join waitlist for filled slots</p>
+                  <p className="text-[11px] text-[#5a3f47]">Select an available slot</p>
                 </div>
                 <span className="text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0">
                   <span className="material-symbols-outlined text-[12px]">schedule</span>
@@ -704,66 +617,6 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
                 selectedDate={selectedDate}
                 onDateChange={setSelectedDate}
               />
-
-              {/* Active User Waitlists Banner for this salon */}
-              {waitlistEntries.filter((e) => e.salonId === salon.id).length > 0 && (
-                <div className="bg-gradient-to-r from-amber-50 to-[#fff0f3] p-4 rounded-2xl border border-amber-200 shadow-xs flex flex-col gap-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-extrabold text-[#26181c] flex items-center gap-1.5">
-                      <span className="material-symbols-outlined text-amber-600 text-[18px]">list_alt</span>
-                      Your Active Waitlists ({waitlistEntries.filter((e) => e.salonId === salon.id).length})
-                    </span>
-                    <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300">
-                      Auto-Notifying
-                    </span>
-                  </div>
-
-                  <div className="space-y-2">
-                    {waitlistEntries.filter((e) => e.salonId === salon.id).map((entry) => (
-                      <div
-                        key={entry.id}
-                        className="bg-white p-3 rounded-xl border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-2xs"
-                      >
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-[#26181c]">
-                              {entry.timeSlot} • {entry.dateStr}
-                            </span>
-                            <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-900 border border-amber-300">
-                              Queue #{entry.position}
-                            </span>
-                            {entry.status === 'NOTIFIED' && (
-                              <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.2 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse">
-                                Slot Opened!
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-[#5a3f47] mt-0.5">
-                            Alert via <strong className="uppercase">{entry.notificationPreference}</strong> ({entry.clientPhone})
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 self-end sm:self-auto">
-                          <button
-                            onClick={() => handleSimulateOpening(entry)}
-                            className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-2xs flex items-center gap-0.5 active:scale-95"
-                            title="Simulate cancellation alert"
-                          >
-                            <span className="material-symbols-outlined text-[12px]">bolt</span>
-                            Simulate Slot Alert
-                          </button>
-                          <button
-                            onClick={() => handleRemoveWaitlist(entry.id)}
-                            className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-[10px] font-bold cursor-pointer"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               {/* Time Slots Grid */}
               <div className="space-y-4">
@@ -804,13 +657,6 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
                                 <span className="text-[9px] font-extrabold bg-slate-200 text-slate-700 px-1 rounded">No slots available</span>
                               </div>
 
-                              <button
-                                onClick={() => handleOpenWaitlistModal(slot.time)}
-                                className="w-full py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-2xs flex items-center justify-center gap-0.5 active:scale-95"
-                              >
-                                <span className="material-symbols-outlined text-[12px]">notifications_active</span>
-                                Join Waitlist
-                              </button>
                             </div>
                           );
                         })}

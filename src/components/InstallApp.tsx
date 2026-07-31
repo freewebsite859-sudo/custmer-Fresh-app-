@@ -621,7 +621,7 @@ export const InstallApp: React.FC<InstallAppProps> = ({ onClose, onInstall, init
               {/* Social Proof Footer */}
               <div className="mt-4 pt-3 border-t border-[var(--color-outline-variant)]/50 w-full flex items-center justify-center gap-1.5 text-[11px] text-[var(--color-on-surface-variant)] font-medium">
                 <span className="material-symbols-outlined text-[15px] text-[#e6007e]">groups</span>
-                <span>Join <strong className="font-extrabold text-[var(--color-on-surface)]">10k+ users</strong> who installed Nexora</span>
+                <span>Install Nexora for <strong className="font-extrabold text-[var(--color-on-surface)]">faster booking</strong> and offline access</span>
               </div>
 
               {/* Progress Bar */}
