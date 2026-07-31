@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Address } from '../types';
 import { supabase } from '../lib/supabaseClient';
+import { Address } from '../types';
 import {
   loadAddresses,
   addAddress,
@@ -21,14 +21,11 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
   onNavigate,
   customerId,
 }) => {
-  // Addresses sync with the `addresses` table (single source of truth).
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [isSaving, setIsSaving] = useState(false);
-
   const [view, setView] = useState<'list' | 'form'>('list');
   const [selectedAddress, setSelectedAddress] = useState<Address | null>(null);
 
-  // Form states
   const [formLabel, setFormLabel] = useState<string>('Home');
   const [formFlatNumber, setFormFlatNumber] = useState<string>('');
   const [formStreet, setFormStreet] = useState<string>('');
@@ -55,7 +52,7 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
       void refresh();
     });
     return unsubscribe;
-  }, [refresh]);
+  }, [refresh, customerId]);
 
   const triggerToast = (msg: string) => {
     setToast(msg);
@@ -67,10 +64,7 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
     setDefaultAddress(supabase, customerId, id)
       .then(setAddresses)
       .then(() => triggerToast('Default address updated!'))
-      .catch((e) => {
-        console.warn('Default address notice:', e?.message || e);
-        triggerToast('Could not update the default address right now.');
-      });
+      .catch(() => triggerToast('Could not update default address.'));
   };
 
   const handleDelete = (id: string) => {
@@ -78,10 +72,7 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
     deleteAddress(supabase, customerId, id)
       .then(setAddresses)
       .then(() => triggerToast('Address deleted successfully!'))
-      .catch((e) => {
-        console.warn('Delete address notice:', e?.message || e);
-        triggerToast('Could not delete the address right now.');
-      });
+      .catch(() => triggerToast('Could not delete address.'));
   };
 
   const handleOpenForm = (address?: Address) => {
@@ -107,395 +98,87 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
     setView('form');
   };
 
-  // Real GPS detection — reverse geocodes the actual device position.
   const handleLocateMe = () => {
-    if (isLocating) return;
-    if (!('geolocation' in navigator)) {
-      triggerToast('Geolocation is not supported on this device.');
-      return;
-    }
+    if (!('geolocation' in navigator)) return;
     setIsLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const { latitude, longitude } = pos.coords;
-          const resp = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
-            { headers: { 'Accept-Language': 'en' } },
-          );
-          if (!resp.ok) throw new Error(`geocoder HTTP ${resp.status}`);
-          const data = await resp.json();
-          const addr = data?.address || {};
-          const city = String(addr.city || addr.town || addr.county || addr.state_district || '');
-          const streetParts = [addr.road, addr.suburb || addr.neighbourhood || addr.residential].filter(Boolean);
-          if (addr.postcode) setFormPincode(String(addr.postcode));
-          if (city) setFormCity(city);
-          if (streetParts.length) setFormStreet(streetParts.join(', '));
-          if (addr.amenity || addr.building) setFormFlatNumber(String(addr.amenity || addr.building));
-          triggerToast(city ? `GPS address detected in ${city} — please verify before saving.` : 'GPS position found — please verify the address before saving.');
-        } catch {
-          triggerToast('Location lookup failed. Please enter the address manually.');
-        } finally {
-          setIsLocating(false);
-        }
-      },
-      (err) => {
-        setIsLocating(false);
-        triggerToast(err.code === 1 ? 'Location permission denied — please type the address.' : 'Could not get GPS position — please type the address.');
-      },
-      { timeout: 10000, maximumAge: 60000 },
-    );
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      try {
+        const { latitude, longitude } = pos.coords;
+        const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=18`);
+        const data = await resp.json();
+        const addr = data?.address || {};
+        if (addr.postcode) setFormPincode(String(addr.postcode));
+        if (addr.city || addr.town) setFormCity(addr.city || addr.town);
+        if (addr.road) setFormStreet(addr.road);
+        triggerToast('GPS position found.');
+      } finally { setIsLocating(false); }
+    }, () => setIsLocating(false));
   };
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!supabase || !customerId) return;
     if (!formFlatNumber.trim() || !formStreet.trim() || !formCity.trim() || !formPincode.trim()) {
-      triggerToast('Please fill in all required fields.');
+      triggerToast('Required fields missing.');
       return;
     }
-    if (!supabase || !customerId) {
-      triggerToast('Saving addresses needs a signed-in account. Please log in again.');
-      return;
-    }
-
-    const payload = {
-      label: formLabel,
-      flatNumber: formFlatNumber,
-      street: formStreet,
-      landmark: formLandmark,
-      city: formCity,
-      pincode: formPincode,
-      isDefault: formIsDefault,
-    };
+    const payload = { label: formLabel, flat_number: formFlatNumber, street: formStreet, landmark: formLandmark, city: formCity, pincode: formPincode, is_default: formIsDefault };
     const makeDefault = formIsDefault || addresses.length === 0;
-
     setIsSaving(true);
     const op = selectedAddress
       ? updateAddress(supabase, customerId, selectedAddress.id, payload, makeDefault)
       : addAddress(supabase, customerId, payload, makeDefault);
-    op
-      .then(setAddresses)
-      .then(() => {
-        triggerToast(selectedAddress ? 'Address updated & synced!' : 'Address saved & synced!');
-        setView('list');
-      })
-      .catch((err: any) => {
-        console.warn('Save address notice:', err?.message || err);
-        triggerToast('Could not save the address right now — please try again.');
-      })
-      .finally(() => setIsSaving(false));
+    op.then(setAddresses).then(() => { triggerToast('Saved!'); setView('list'); }).finally(() => setIsSaving(false));
   };
 
   return (
-    <div className="flex flex-col w-full max-w-md mx-auto pb-32 animate-in fade-in duration-200">
-      {/* Toast popup */}
+    <div className="flex flex-col w-full max-w-md mx-auto pb-32 animate-in fade-in">
       {toast && (
-        <div className="fixed bottom-32 mb-safe inset-x-4 z-50 bg-[#26181c] text-white px-4 py-3 rounded-xl shadow-lg border border-primary-fixed-dim text-xs font-semibold flex items-center gap-2 max-w-sm mx-auto animate-in slide-in-from-bottom duration-200">
-          <span className="material-symbols-outlined text-primary-pink text-lg">check_circle</span>
+        <div className="fixed bottom-32 mb-safe inset-x-4 z-50 bg-[#26181c] text-white px-4 py-3 rounded-xl shadow-lg border border-[#e0bec6]/30 text-xs font-semibold flex items-center gap-2 max-w-sm mx-auto animate-in slide-in-from-bottom duration-200">
+          <span className="material-symbols-outlined text-[#e6007e] text-lg">check_circle</span>
           <span>{toast}</span>
         </div>
       )}
 
       {view === 'list' ? (
         <div className="flex flex-col gap-6">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center px-4 pt-4">
             <div>
               <h2 className="text-[22px] font-bold text-on-surface tracking-tight">Saved Addresses</h2>
-              <p className="text-[13px] text-[#5a3f47] mt-1">Manage where we bring the salon to you.</p>
+              <p className="text-[13px] text-[#5a3f47] mt-1">Manage your locations.</p>
             </div>
-            <button
-              onClick={() => handleOpenForm()}
-              className="bg-[#e6007e] text-white h-11 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-[#b90064] transition-colors shadow-sm cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[18px]">add</span>
-              Add New
-            </button>
+            <button onClick={() => handleOpenForm()} className="bg-[#e6007e] text-white h-11 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"><span className="material-symbols-outlined text-[18px]">add</span>Add</button>
           </div>
 
           {addresses.length === 0 ? (
-            /* Empty State Screen exactly matching third user request HTML */
-            <div className="flex flex-col items-center justify-center py-16 px-4 bg-white rounded-3xl border border-[#e8e8e8] relative overflow-hidden shadow-xs">
-              {/* Subtle ambient background glow */}
-              <div className="absolute inset-0 z-0 pointer-events-none flex items-center justify-center opacity-30">
-                <div className="w-64 h-64 rounded-full bg-primary-fixed-dim blur-3xl mix-blend-multiply animate-pulse" style={{ animationDuration: '4s' }}></div>
-              </div>
-              
-              {/* Content Container */}
-              <div className="relative z-10 flex flex-col items-center text-center max-w-sm w-full mx-auto space-y-6">
-                {/* Illustration */}
-                <div className="relative w-44 h-44 rounded-full bg-slate-50 flex items-center justify-center overflow-hidden border border-[#e8e8e8]/50">
-                  <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-primary-fixed/20 to-transparent"></div>
-                  <img
-                    alt="Stylized map pin illustration"
-                    className="w-full h-full object-cover p-4 mix-blend-darken rounded-full"
-                    src="https://lh3.googleusercontent.com/aida/AP1WRLtmvAdbOAiNbHdMc7iyeZMCakHR9JSwfo91efu2VI2uG42xtd23ucSOYTJCU0YeJ5zp_C1LE2SUa2XYR4BkiVByNpE90OvjiLwHI68LdFz7m3tx7KL7fIW2dana5Kkn0xuBVd6fGozxiA-Fp6FH7Ou5uSqErDC8PlPRpQ7wEgO-j6CuZDDer_BwvGnQglO8YbCUCkS9luR5A-gxisk76ivWp96GxgpRsB9DK9tUNiPaIiQxVdtzgR0wFA"
-                  />
-                  <div className="absolute inset-0 rounded-full border border-outline-subtle/50 pointer-events-none"></div>
-                </div>
-
-                {/* Typography */}
-                <div className="flex flex-col space-y-2 items-center">
-                  <h2 className="text-lg font-bold text-on-surface tracking-tight">No saved addresses</h2>
-                  <p className="text-xs text-[#5a3f47] max-w-[280px] leading-relaxed">
-                    Add your home or office address for a faster booking experience.
-                  </p>
-                </div>
-
-                {/* CTA */}
-                <button
-                  onClick={() => handleOpenForm()}
-                  className="w-full sm:w-auto px-6 h-12 bg-[#e6007e] text-white font-bold text-sm rounded-xl shadow-md shadow-primary-pink/10 hover:bg-[#b90064] active:scale-[0.98] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-[18px]">add</span>
-                  <span>Add Address</span>
-                </button>
-              </div>
-            </div>
+            <div className="flex flex-col items-center justify-center py-16 px-4 bg-white rounded-3xl border border-[#e8e8e8] mx-4"><h2 className="text-lg font-bold text-on-surface">No saved addresses</h2><p className="text-xs text-[#5a3f47] mt-2">Add an address for a faster booking experience.</p><button onClick={() => handleOpenForm()} className="mt-6 px-6 h-12 bg-[#e6007e] text-white font-bold text-sm rounded-xl shadow-md">Add Address</button></div>
           ) : (
-            /* Address cards exactly matching user list HTML */
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4 px-4">
               {addresses.map((addr) => (
-                <div
-                  key={addr.id}
-                  className={`bg-white p-5 rounded-2xl border transition-all relative overflow-hidden ${
-                    addr.isDefault
-                      ? 'border-[#e0bec6] bg-[#fff8f8] shadow-[0_4px_20px_rgba(230,0,126,0.02)]'
-                      : 'border-[#e8e8e8] hover:border-slate-300'
-                  }`}
-                >
-                  {addr.isDefault && (
-                    <div className="absolute top-0 left-0 w-1 h-full bg-[#e6007e]"></div>
-                  )}
-
-                  <div className="flex justify-between items-start mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className={`material-symbols-outlined text-[20px] ${
-                        addr.isDefault ? 'text-[#e6007e]' : 'text-[#8c7077]'
-                      }`} style={addr.isDefault ? { fontVariationSettings: "'FILL' 1" } : {}}>
-                        {addr.label.toLowerCase().includes('home') ? 'home' : addr.label.toLowerCase().includes('office') || addr.label.toLowerCase().includes('work') ? 'work' : 'favorite'}
-                      </span>
-                      <h3 className="font-semibold text-[15px] text-on-surface">{addr.label}</h3>
-                      {addr.isDefault && (
-                        <span className="bg-[#ffd9e2] text-[#8e004b] px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider ml-2 scale-90">
-                          Default
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={() => handleOpenForm(addr)}
-                        className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[#5a3f47] hover:text-[#e6007e] hover:bg-[#ffe8ed] transition-colors cursor-pointer"
-                        title="Edit"
-                      >
-                        <span className="material-symbols-outlined text-[18px]">edit</span>
-                      </button>
-                      <button
-                        onClick={() => handleDelete(addr.id)}
-                        className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[#5a3f47] hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-                        title="Delete"
-                      >
-                        <span className="material-symbols-outlined text-[18px]">delete</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="text-[13px] text-[#5a3f47] leading-relaxed mb-3">
-                    <p className="font-semibold text-on-surface">{addr.flatNumber}</p>
-                    <p>{addr.street}</p>
-                    {addr.landmark && (
-                      <p className="text-[11px] text-[#8c7077] italic mt-0.5">Landmark: {addr.landmark}</p>
-                    )}
-                    <p className="text-[11px] text-[#8c7077] mt-1">{addr.city} {addr.pincode}</p>
-                  </div>
-
-                  {!addr.isDefault && (
-                    <button
-                      onClick={() => handleSetDefault(addr.id)}
-                      className="text-[11px] font-bold text-[#e6007e] bg-[#ffd9e2]/30 hover:bg-[#ffd9e2]/60 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-                    >
-                      Set as Default
-                    </button>
-                  )}
+                <div key={addr.id} className={`bg-white p-5 rounded-2xl border transition-all relative overflow-hidden ${addr.isDefault ? 'border-[#e0bec6] bg-[#fff8f8]' : 'border-[#e8e8e8]'}`}>
+                  <div className="flex justify-between items-start mb-3"><div className="flex items-center gap-2"><span className={`material-symbols-outlined text-[20px] ${addr.isDefault ? 'text-[#e6007e]' : 'text-[#8c7077]'}`}>{addr.label === 'Home' ? 'home' : 'work'}</span><h3 className="font-semibold text-[15px]">{addr.label}</h3>{addr.isDefault && <span className="bg-[#ffd9e2] text-[#8e004b] px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ml-2">Default</span>}</div><div className="flex gap-1.5"><button onClick={() => handleOpenForm(addr)} className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[#5a3f47] hover:bg-[#ffe8ed] cursor-pointer"><span className="material-symbols-outlined text-[18px]">edit</span></button><button onClick={() => handleDelete(addr.id)} className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[#5a3f47] hover:text-red-600 cursor-pointer"><span className="material-symbols-outlined text-[18px]">delete</span></button></div></div>
+                  <div className="text-[13px] text-[#5a3f47] leading-relaxed"><p className="font-semibold text-on-surface">{addr.flatNumber}</p><p>{addr.street}</p><p className="text-[11px] text-[#8c7077] mt-1">{addr.city} {addr.pincode}</p></div>
+                  {!addr.isDefault && <button onClick={() => handleSetDefault(addr.id)} className="text-[11px] font-bold text-[#e6007e] mt-3 underline">Set as Default</button>}
                 </div>
               ))}
             </div>
           )}
         </div>
       ) : (
-        /* Form View exactly matching user form HTML structure */
-        <form onSubmit={handleSave} className="flex flex-col gap-5">
-          <div className="flex justify-between items-center">
-            <div>
-              <h2 className="text-[20px] font-bold text-on-surface tracking-tight">
-                {selectedAddress ? 'Edit Address' : 'Add New Address'}
-              </h2>
-              <p className="text-[12px] text-[#5a3f47] mt-0.5">
-                {selectedAddress ? 'Modify your saved details below.' : 'Add your custom delivery and service address.'}
-              </p>
-            </div>
+        <form onSubmit={handleSave} className="flex flex-col gap-5 px-4 pt-4">
+          <h2 className="text-[20px] font-bold text-on-surface">{selectedAddress ? 'Edit Address' : 'Add New Address'}</h2>
+          <div className="w-full h-44 rounded-2xl overflow-hidden relative border border-[#e8e8e8] bg-slate-100 flex items-center justify-center">
+            <button type="button" onClick={handleLocateMe} disabled={isLocating} className="z-10 bg-white px-4 py-2 rounded-full shadow-lg flex items-center gap-2 cursor-pointer border border-slate-100">{isLocating ? <span className="animate-spin material-symbols-outlined text-[#e6007e]">progress_activity</span> : <span className="material-symbols-outlined text-[#e6007e]">my_location</span>}<span className="text-xs font-bold">Locate Me</span></button>
+            <span className="absolute material-symbols-outlined text-[#e6007e] text-4xl drop-shadow-md">location_on</span>
           </div>
-
-          {/* Map background with pin & locate me */}
-          <div
-            className="w-full h-44 rounded-2xl overflow-hidden relative border border-[#e8e8e8]"
-            style={{
-              backgroundImage: "url('https://lh3.googleusercontent.com/aida-public/AB6AXuAA5SFkus6dDWmYvvjZrAYDHZOLX_IOHXETYBvKeJE27MH1A1cVuC1GYhOxkSoSX6b428DYbxVJwHKNzCXl1ZezM5bMXFDs1JC2r0Xc8PfjsuqHcuJF9xr36Q9mlGnMJZlE8sKYYtgCyE8uoEF53Zhx_lfHseqn0nB216Eby4dRk3NwS42VhDnwsPktz0zI3S54nRJEI93G8paIQNi5_bJQtaBH0J5sey3NeTrKGFrGyjPrt96R53b1yM8g915VBSZKe00wc9imMyM')",
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-            }}
-          >
-            <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent pointer-events-none"></div>
-            
-            <div className="absolute inset-0 flex items-end justify-center pb-3 z-10">
-              <button
-                type="button"
-                onClick={handleLocateMe}
-                disabled={isLocating}
-                className="bg-white px-4 py-2 rounded-full shadow-lg flex items-center gap-2 cursor-pointer active:scale-95 transition-all hover:bg-slate-50 border border-slate-100/80"
-              >
-                {isLocating ? (
-                  <>
-                    <span className="material-symbols-outlined text-[#e6007e] text-[18px] animate-spin">progress_activity</span>
-                    <span className="text-xs font-bold text-[#26181c]">Locating...</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="material-symbols-outlined text-[#e6007e] text-[18px]">my_location</span>
-                    <span className="text-xs font-bold text-[#26181c]">Locate Me</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 drop-shadow-md pointer-events-none z-10">
-              <span className="material-symbols-outlined text-[#e6007e] text-4xl font-bold" style={{ fontVariationSettings: "'FILL' 1" }}>location_on</span>
-            </div>
-          </div>
-
           <div className="flex flex-col gap-4">
-            {/* Address Label buttons */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-bold text-[#5a3f47] ml-0.5">Address Label</label>
-              <div className="flex gap-2">
-                {['Home', 'Office', 'Other'].map((l) => (
-                  <button
-                    key={l}
-                    type="button"
-                    onClick={() => setFormLabel(l)}
-                    className={`flex-1 h-11 rounded-xl font-bold text-[13px] transition-all cursor-pointer ${
-                      formLabel === l
-                        ? 'bg-[#e6007e] text-white shadow-sm'
-                        : 'bg-slate-100 text-[#5a3f47] hover:bg-slate-200/60'
-                    }`}
-                  >
-                    {l}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Flat Number */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-bold text-[#5a3f47] ml-0.5">House / Flat Number</label>
-              <input
-                type="text"
-                value={formFlatNumber}
-                onChange={(e) => setFormFlatNumber(e.target.value)}
-                placeholder="e.g. Flat 201, Pearl Residency"
-                className="w-full h-12 bg-white rounded-xl px-4 border border-[#e8e8e8] text-[13px] text-on-surface focus:outline-none focus:border-[#e6007e] transition-colors"
-                required
-              />
-            </div>
-
-            {/* Street */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-bold text-[#5a3f47] ml-0.5">Street / Area</label>
-              <input
-                type="text"
-                value={formStreet}
-                onChange={(e) => setFormStreet(e.target.value)}
-                placeholder="e.g. Jhotwara Road"
-                className="w-full h-12 bg-white rounded-xl px-4 border border-[#e8e8e8] text-[13px] text-on-surface focus:outline-none focus:border-[#e6007e] transition-colors"
-                required
-              />
-            </div>
-
-            {/* Landmark */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-bold text-[#5a3f47] ml-0.5">
-                Landmark <span className="text-[#8c7077] font-normal">(Optional)</span>
-              </label>
-              <input
-                type="text"
-                value={formLandmark}
-                onChange={(e) => setFormLandmark(e.target.value)}
-                placeholder="e.g. Opposite Central Park"
-                className="w-full h-12 bg-white rounded-xl px-4 border border-[#e8e8e8] text-[13px] text-on-surface focus:outline-none focus:border-[#e6007e] transition-colors"
-              />
-            </div>
-
-            {/* City & PIN */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-[#5a3f47] ml-0.5">City / District</label>
-                <input
-                  type="text"
-                  value={formCity}
-                  onChange={(e) => setFormCity(e.target.value)}
-                  placeholder="Jaipur"
-                  className="w-full h-12 bg-white rounded-xl px-4 border border-[#e8e8e8] text-[13px] text-on-surface focus:outline-none focus:border-[#e6007e] transition-colors"
-                  required
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-[#5a3f47] ml-0.5">PIN Code</label>
-                <input
-                  type="text"
-                  value={formPincode}
-                  onChange={(e) => setFormPincode(e.target.value)}
-                  placeholder="302001"
-                  className="w-full h-12 bg-white rounded-xl px-4 border border-[#e8e8e8] text-[13px] text-on-surface focus:outline-none focus:border-[#e6007e] transition-colors"
-                  required
-                />
-              </div>
-            </div>
-
-            {/* Set as default address toggle */}
-            <div
-              onClick={() => setFormIsDefault(!formIsDefault)}
-              className="mt-2 flex items-center gap-3 cursor-pointer select-none"
-            >
-              <div
-                className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300 ${
-                  formIsDefault ? 'bg-[#e6007e]/20' : 'bg-slate-200'
-                }`}
-              >
-                <div
-                  className={`w-3 h-3 rounded-full transition-colors duration-300 ${
-                    formIsDefault ? 'bg-[#e6007e]' : 'bg-transparent'
-                  }`}
-                ></div>
-              </div>
-              <span className="text-[13px] font-bold text-on-surface">Set as default address</span>
-            </div>
+            <div className="flex gap-2">{['Home', 'Office', 'Other'].map(l => <button key={l} type="button" onClick={() => setFormLabel(l)} className={`flex-1 h-11 rounded-xl font-bold text-[13px] transition-all cursor-pointer ${formLabel === l ? 'bg-[#e6007e] text-white' : 'bg-slate-100 text-[#5a3f47]'}`}>{l}</button>)}</div>
+            <input type="text" value={formFlatNumber} onChange={(e) => setFormFlatNumber(e.target.value)} placeholder="House / Flat Number" className="w-full h-12 bg-white rounded-xl px-4 border border-[#e8e8e8] text-[13px]" required />
+            <input type="text" value={formStreet} onChange={(e) => setFormStreet(e.target.value)} placeholder="Street / Area" className="w-full h-12 bg-white rounded-xl px-4 border border-[#e8e8e8] text-[13px]" required />
+            <div className="grid grid-cols-2 gap-3"><input type="text" value={formCity} onChange={(e) => setFormCity(e.target.value)} placeholder="City" className="w-full h-12 bg-white rounded-xl px-4 border border-[#e8e8e8] text-[13px]" required /><input type="text" value={formPincode} onChange={(e) => setFormPincode(e.target.value)} placeholder="PIN Code" className="w-full h-12 bg-white rounded-xl px-4 border border-[#e8e8e8] text-[13px]" required /></div>
+            <div onClick={() => setFormIsDefault(!formIsDefault)} className="mt-2 flex items-center gap-3 cursor-pointer select-none"><div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300 ${formIsDefault ? 'bg-[#e6007e]/20' : 'bg-slate-200'}`}><div className={`w-3 h-3 rounded-full transition-colors duration-300 ${formIsDefault ? 'bg-[#e6007e]' : 'bg-transparent'}`}></div></div><span className="text-[13px] font-bold text-on-surface">Set as default address</span></div>
           </div>
-
-          {/* Action buttons */}
-          <div className="flex gap-3 mt-4 pt-4 border-t border-[#e8e8e8]">
-            <button
-              type="button"
-              onClick={() => setView('list')}
-              className="flex-1 h-12 bg-white border border-[#e8e8e8] text-[#5a3f47] font-bold rounded-xl transition-colors hover:bg-slate-50 cursor-pointer text-sm"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="flex-1 h-12 bg-[#e6007e] hover:bg-[#b90064] text-white font-bold rounded-xl transition-colors shadow-md shadow-primary-pink/10 cursor-pointer text-sm"
-            >
-              Save Address
-            </button>
-          </div>
+          <div className="flex gap-3 mt-4 pt-4 border-t border-[#e8e8e8]"><button type="button" onClick={() => setView('list')} className="flex-1 h-12 bg-white border border-[#e8e8e8] text-[#5a3f47] font-bold rounded-xl text-sm">Cancel</button><button type="submit" disabled={isSaving} className="flex-1 h-12 bg-[#e6007e] text-white font-bold rounded-xl shadow-md text-sm">{isSaving ? 'Saving…' : 'Save Address'}</button></div>
         </form>
       )}
     </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase, supabaseConfigError } from './lib/supabaseClient';
-import { Screen, Salon, Service, Staff, Booking, UserLocation, AppNotification, ServiceReview, SavedProfessional, SavedService } from './types';
+import { Screen, Salon, Service, Staff, Booking, UserLocation, AppNotification, ServiceReview, SavedProfessional, SavedService, UserProfile } from './types';
 import {
   INITIAL_LOCATION,
 } from './data/mockData';
@@ -42,12 +42,34 @@ import { AddUpiModal, SavedUpi } from './components/AddUpiModal';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { InstallApp } from './components/InstallApp';
 import { Modal } from './components/Modal';
+import { OwnerDashboard } from './components/OwnerDashboard';
+import { GrowthPartnerDashboard } from './components/GrowthPartnerDashboard';
+import { LegalScreen } from './components/LegalScreen';
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<CustomerProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authScreen, setAuthScreen] = useState<'login' | 'signup' | 'role-conflict'>('login');
   const [conflictRole, setConflictRole] = useState<string | null>(null);
+
+  const [screenStack, setScreenStack] = useState<Screen[]>(['home']);
+  const currentScreen = screenStack[screenStack.length - 1];
+
+  const setCurrentScreen = (screen: Screen) => {
+    const mainTabs: Screen[] = ['home', 'search', 'favourites', 'bookings', 'rewards', 'profile'];
+    setScreenStack(prev => {
+      if (mainTabs.includes(screen)) {
+        return [screen];
+      }
+      if (prev[prev.length - 1] === screen) return prev;
+      return [...prev, screen];
+    });
+  };
+
+  const handleBack = () => {
+    setScreenStack(prev => (prev.length > 1 ? prev.slice(0, -1) : ['home']));
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -61,54 +83,41 @@ export default function App() {
 
     const client = supabase;
 
-    // Reads the real profile record and enforces the locked role contract:
-    // access only when platform_role === 'customer' AND is_active === true.
-    const verifyCustomerAccess = async (
+    const verifyPlatformAccess = async (
       authUser: { id: string }
     ): Promise<{ allowed: boolean; role: string | null }> => {
-      const readRole = async (): Promise<string | null> => {
-        const { data: profile, error } = await client
-          .from('profiles')
-          .select('platform_role, is_active')
-          .eq('id', authUser.id)
-          .maybeSingle();
-        if (error || !profile) return null;
-        if (profile.platform_role === 'customer' && profile.is_active === true) {
-          return 'customer';
-        }
-        return profile.platform_role ?? 'unsupported';
-      };
-
-      let role = await readRole();
-      if (role === null) {
-        // A brand-new signup can briefly precede its profile row; retry once
-        // before treating the account as missing/unsupported.
-        await new Promise((resolve) => setTimeout(resolve, 1200));
-        role = await readRole();
+      const prof = await loadProfile(client, authUser.id);
+      if (!prof) return { allowed: false, role: null };
+      
+      const allowedRoles = ['customer', 'business_user', 'growth_partner'];
+      if (prof.is_active === true && allowedRoles.includes(prof.platform_role || '')) {
+        return { allowed: true, role: prof.platform_role };
       }
-      return { allowed: role === 'customer', role };
+      return { allowed: false, role: prof.platform_role || 'inactive' };
     };
 
     const applySession = async (session: { user?: any } | null) => {
       if (!isMounted) return;
       const authUser = session?.user ?? null;
       if (!authUser) {
-        // No session (or session expired/removed): always return to login.
         setUser(null);
+        setProfile(null);
         setAuthLoading(false);
         return;
       }
 
-      const { allowed, role } = await verifyCustomerAccess(authUser);
+      const { allowed, role } = await verifyPlatformAccess(authUser);
       if (!isMounted) return;
 
       if (allowed) {
         setConflictRole(null);
-        setUser(authUser);
+        setUser({ ...authUser, role });
+        // Profile will be hydrated by the bootstrap useEffect.
+        if (role === 'business_user') setCurrentScreen('owner-dashboard');
+        else if (role === 'growth_partner') setCurrentScreen('gp-dashboard');
       } else {
-        // Block non-customer, inactive or role-less accounts and end the
-        // session so a refresh always returns to a safe auth screen.
         setUser(null);
+        setProfile(null);
         setConflictRole(role);
         setAuthScreen('role-conflict');
         await client.auth.signOut();
@@ -153,24 +162,6 @@ export default function App() {
       }
     }
   }, []);
-
-  const [screenStack, setScreenStack] = useState<Screen[]>(['home']);
-  const currentScreen = screenStack[screenStack.length - 1];
-
-  const setCurrentScreen = (screen: Screen) => {
-    const mainTabs: Screen[] = ['home', 'search', 'favourites', 'bookings', 'rewards', 'profile'];
-    setScreenStack(prev => {
-      if (mainTabs.includes(screen)) {
-        return [screen];
-      }
-      if (prev[prev.length - 1] === screen) return prev;
-      return [...prev, screen];
-    });
-  };
-
-  const handleBack = () => {
-    setScreenStack(prev => (prev.length > 1 ? prev.slice(0, -1) : ['home']));
-  };
 
   const [isAppointmentDismissed, setIsAppointmentDismissed] = useState(false);
   // Live payment tracking watch (active Razorpay advance flow for a booking).
@@ -224,26 +215,17 @@ export default function App() {
 
   // Favourites + profile + bookings come from Supabase (single source of
   // truth). They hydrate after login and stay live via Realtime channels.
-  const [profile, setProfile] = useState<CustomerProfile | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [favoriteServiceIds, setFavoriteServiceIds] = useState<string[]>([]);
   const [favoriteStaffIds, setFavoriteStaffIds] = useState<string[]>([]);
 
-  const [recentlyViewed, setRecentlyViewed] = useState<string[]>(() => {
-    const saved = localStorage.getItem('nexora_recently_viewed');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse recently viewed:', e);
-      }
-    }
-    return [];
-  });
+  const [recentlyViewed, setRecentlyViewed] = useState<string[]>([]);
 
   useEffect(() => {
-    localStorage.setItem('nexora_recently_viewed', JSON.stringify(recentlyViewed));
-  }, [recentlyViewed]);
+    if (profile) {
+       setRecentlyViewed((profile as any).recently_viewed || []);
+    }
+  }, [profile?.updated_at]);
 
   // Resolved against the live salon catalogue before rendering.
   const favoriteProfessionals: SavedProfessional[] = favoriteStaffIds.flatMap((staffId) => {
@@ -343,7 +325,7 @@ export default function App() {
   };
 
   const [confirmedModalBooking, setConfirmedModalBooking] = useState<Booking | null>(null);
-  const [initialBookingIdForBookings, setInitialBookingIdForBookings] = useState<string |undefined>(undefined);
+  const [initialBookingIdForBookings, setInitialBookingIdForBookings] = useState<string | undefined>(undefined);
 
   // Notifications: server rows hydrate after login; local entries are only
   // ephemeral device notices (install/sync), never persisted as truth.
@@ -429,8 +411,7 @@ export default function App() {
                 await saveSettings(client, uid, { ...SETTINGS_DEFAULTS, ...legacy });
               }
             } catch (e: any) { console.warn('Settings migration notice:', e?.message || e); }
-            // favourites (salon ids only if they resolve to the catalogue; all
-            // uuids are accepted for staff/service favourites)
+            // favourites
             const legacySalonFavs = readLegacyJson<string[]>('nexora_favorites') ?? [];
             const legacyProFavs = (readLegacyJson<Array<{ id: string }>>('nexora_favorite_pros') ?? []).map((p) => p?.id).filter(Boolean) as string[];
             const legacyServiceFavs = (readLegacyJson<Array<{ id: string }>>('nexora_favorite_services') ?? []).map((s) => s?.id).filter(Boolean) as string[];
@@ -443,7 +424,7 @@ export default function App() {
             for (const id of legacyServiceFavs.filter((x) => UUID_RE.test(x))) {
               await setFavorite(client, uid, 'service', id, true).catch(() => undefined);
             }
-            // addresses (import only when the server has none yet)
+            // addresses
             try {
               const serverAddrs = await loadAddresses(client, uid);
               const legacyAddrs = readLegacyJson<Array<any>>('nexora_saved_addresses') ?? [];
@@ -452,7 +433,7 @@ export default function App() {
                 await importLegacyAddresses(client, uid, realAddrs);
               }
             } catch (e: any) { console.warn('Address migration notice:', e?.message || e); }
-            // payment methods (import only when the server has none yet)
+            // payment methods
             try {
               const existing = await loadPaymentMethods(client, uid);
               const legacyUpis = (readLegacyJson<Array<any>>('nexora_saved_upis') ?? []).filter((u) => u && typeof u.id === 'string' && !u.id.startsWith('upi-'));
@@ -591,7 +572,7 @@ export default function App() {
       syncChannel.close();
       window.removeEventListener('online', handleOnline);
     };
-  }, []); // Use empty dependency or handle refreshes carefully
+  }, [refreshBookings]);
 
   // Global UPI QR Scanner States
   const [isGlobalScanQrOpen, setIsGlobalScanQrOpen] = useState(false);
@@ -614,13 +595,7 @@ export default function App() {
       localStorage.setItem('nexora_app_installed', 'true');
     }
 
-    // Auto-show popup if:
-    // 1. Not installed
-    // 2. Not in standalone mode
-    // 3. Not dismissed in current session
-    // 4. Not dismissed permanently via "Don't show again" checkbox
     if (!isAppInstalled && !isStandalone && !hasDismissedInSession && !isPwaDismissedPermanently) {
-      // Delay slightly for better UX (2 seconds)
       const timer = setTimeout(() => {
         setIsInstallModalOpen(true);
       }, 2000);
@@ -630,25 +605,14 @@ export default function App() {
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: any) => {
-      // Prevent the mini-infobar from appearing on mobile
       e.preventDefault();
-      // Stash the event so it can be triggered later.
       setDeferredPrompt(e);
-      console.log('beforeinstallprompt event was stashed');
     };
-
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-
     window.addEventListener('appinstalled', () => {
-      // Clear the deferredPrompt so it can be garbage collected
       setDeferredPrompt(null);
-      console.log('PWA was installed');
-      
-      // Mark as installed permanently
       setIsAppInstalled(true);
       localStorage.setItem('nexora_app_installed', 'true');
-      
-      // Show success notification
       const installNotif: AppNotification = {
         id: `install-${Date.now()}`,
         bookingId: '',
@@ -664,55 +628,14 @@ export default function App() {
       setNotifications(prev => [installNotif, ...prev]);
       setActivePushOverlay(installNotif);
     });
-
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     };
   }, []);
 
-  // Only device-local UI state is cached locally (browsing location,
-  // recently viewed). All account/customer data lives in Supabase.
   useEffect(() => {
     localStorage.setItem('nexora_user_location', JSON.stringify(userLocation));
   }, [userLocation]);
-
-  // Trigger push notification helper
-  const triggerPushNotificationForBooking = (targetBookingId?: string) => {
-    const targetBooking =
-      bookings.find((b) => b.id === targetBookingId) ||
-      bookings.find((b) => b.status === 'CONFIRMED' || b.status === 'PENDING') ||
-      bookings[0];
-
-    if (!targetBooking) return;
-
-    const newNotif: AppNotification = {
-      id: `notif-${Date.now()}`,
-      bookingId: targetBooking.id,
-      salonName: targetBooking.salonName,
-      timeSlot: targetBooking.timeSlot,
-      dateStr: targetBooking.dateStr,
-      servicesSummary: targetBooking.services.map((s) => s.name).join(', '),
-      timestamp: Date.now(),
-      read: false,
-      type: 'reminder_1h',
-      message: `Your appointment at ${targetBooking.salonName} starts in 1 hour (${targetBooking.timeSlot})!`,
-    };
-
-    setNotifications((prev) => [newNotif, ...prev]);
-    setActivePushOverlay(newNotif);
-
-    // Trigger Browser Push Notification if browser supports and permitted
-    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-      try {
-        new Notification(`⏰ 1-Hour Reminder: ${targetBooking.salonName}`, {
-          body: `Your appointment for ${newNotif.servicesSummary} starts in 1 hour at ${targetBooking.timeSlot}.`,
-          icon: '/icon.png',
-        });
-      } catch (e) {
-        console.warn('Native push notification error', e);
-      }
-    }
-  };
 
   // Favourites: optimistic local toggle + Supabase write; Realtime keeps
   // every logged-in device in sync (task STEPS 6/7).
@@ -752,14 +675,22 @@ export default function App() {
     }
   };
 
-  const handleSelectSalon = (salon: Salon) => {
+  const handleSelectSalon = async (salon: Salon) => {
     setSelectedSalon(salon);
     setSelectedServices(salon.services.length > 0 ? [salon.services[0]] : []);
     setSelectedStaff(salon.staff.length > 0 ? salon.staff[0] : null);
-    setRecentlyViewed((prev) => {
-      const filtered = prev.filter((id) => id !== salon.id);
-      return [salon.id, ...filtered].slice(0, 10);
-    });
+    
+    if (user && profile) {
+      const newRecentlyViewed = [salon.id, ...recentlyViewed.filter(id => id !== salon.id)].slice(0, 10);
+      setRecentlyViewed(newRecentlyViewed);
+      
+      // Sync to DB immediately for cross-device visibility
+      await supabase?.from('profiles').update({
+        recently_viewed: newRecentlyViewed,
+        updated_at: new Date().toISOString()
+      }).eq('id', user.id);
+    }
+    
     setCurrentScreen('salon-detail');
   };
 
@@ -792,8 +723,6 @@ export default function App() {
       throw new Error('Your customer session expired. Please log in again to continue booking.');
     }
 
-    // Real pipeline (mirrors main-website, already live in production):
-    //   1) create booking via audited RPC (server validates role/salon/services)
     const bookingId = await createCustomerBooking(supabase, {
       salonId: bookingData.salon.id,
       serviceIds: bookingData.services.map((s) => s.id),
@@ -801,14 +730,9 @@ export default function App() {
       appointmentStart: bookingData.appointmentStart,
       customerNote: bookingData.customerNote,
     });
-    //   2) secure advance order — amount is computed SERVER-side (25%)
     const order = await createAdvanceOrder(supabase, session.access_token, bookingId);
-    //   3) open the real Razorpay checkout window (UPI apps / QR scan supported)
     await loadRazorpayCheckout();
     openRazorpayAdvanceCheckout(order, session.user?.email ?? '', {
-      // Razorpay fires this only after a successful payment — moves the
-      // tracker to the interim "received, confirming…" stage (NOT final confirm;
-      // the server/webhook stays the authority).
       onPaymentSuccess: () => {
         setPaymentWatch((prev) =>
           prev ? { ...prev, paymentSubmitted: true } : prev,
@@ -831,9 +755,7 @@ export default function App() {
     };
 
     setBookings((prev) => [newBooking, ...prev]);
-    // Server remains the truth — pull the freshly created row right away.
     void refreshBookings();
-    // Start live in-app payment tracking for this booking (QR/UPI flow).
     setPaymentWatch({
       bookingId: newBooking.id,
       salonName: newBooking.salonName,
@@ -843,14 +765,12 @@ export default function App() {
     return newBooking;
   };
 
-  // Called by PaymentStatusTracker ONLY when the bookings row itself proves payment.
   const handlePaymentProven = (bookingId: string) => {
     setBookings((prev) =>
       prev.map((b) =>
         b.id === bookingId ? { ...b, status: 'CONFIRMED' as Booking['status'] } : b,
       ),
     );
-    // Reconcile immediately with the authoritative bookings row.
     void refreshBookings();
   };
 
@@ -886,7 +806,6 @@ export default function App() {
 
   const handleSnoozeNotification = (id: string) => {
     setActivePushOverlay(null);
-    // Re-trigger overlay after 10 seconds for testing/preview
     setTimeout(() => {
       const snoozedNotif = notifications.find((n) => n.id === id);
       if (snoozedNotif) {
@@ -898,7 +817,6 @@ export default function App() {
     }, 10000);
   };
 
-  // Screen Title helper
   const getHeaderTitle = (): string => {
     switch (currentScreen) {
       case 'home':
@@ -923,6 +841,16 @@ export default function App() {
         return 'Help Home';
       case 'settings':
         return 'App Settings';
+      case 'owner-dashboard':
+        return 'Owner Dashboard';
+      case 'gp-dashboard':
+        return 'Partner Dashboard';
+      case 'terms':
+        return 'Terms & Conditions';
+      case 'privacy':
+        return 'Privacy Policy';
+      case 'cancellation':
+        return 'Refund Policy';
       default:
         return 'Nexora';
     }
@@ -935,7 +863,10 @@ export default function App() {
     currentScreen === 'favourites' ||
     currentScreen === 'saved-addresses' ||
     currentScreen === 'support' ||
-    currentScreen === 'settings';
+    currentScreen === 'settings' ||
+    currentScreen === 'terms' ||
+    currentScreen === 'privacy' ||
+    currentScreen === 'cancellation';
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   if (supabaseConfigError) {
@@ -982,7 +913,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#fff8f8] text-[#26181c] font-['Inter',sans-serif] relative flex flex-col justify-between">
-      {/* Floating Interactive Push Notification Overlay */}
       <NotificationOverlay
         notification={activePushOverlay}
         onDismiss={() => setActivePushOverlay(null)}
@@ -990,7 +920,6 @@ export default function App() {
         onNavigate={(screen) => setCurrentScreen(screen)}
       />
 
-      {/* Drawer for Notification History and Push Settings */}
       <NotificationDrawer
         isOpen={isNotificationDrawerOpen}
         onClose={() => setIsNotificationDrawerOpen(false)}
@@ -1004,7 +933,6 @@ export default function App() {
         onNavigate={(screen) => setCurrentScreen(screen)}
       />
 
-      {/* Booking Confirmation Modal overlay when booking succeeds */}
       {confirmedModalBooking && (
         <BookingConfirmationModal
           booking={confirmedModalBooking}
@@ -1020,7 +948,6 @@ export default function App() {
         />
       )}
 
-      {/* Render Header for main views (outside max-w-md container for full viewport width) */}
       {currentScreen !== 'welcome' &&
         currentScreen !== 'splash' &&
         currentScreen !== 'location-modal' && currentScreen !== 'salon-detail' && currentScreen !== 'checkout' && (
@@ -1048,7 +975,6 @@ export default function App() {
         )}
 
       <div className="w-full flex-1 flex flex-col relative">
-        {/* Content Body Container */}
         <main
           className={`flex-1 w-full max-w-md mx-auto ${
             currentScreen !== 'welcome' &&
@@ -1153,10 +1079,11 @@ export default function App() {
             />
           )}
 
-          {currentScreen === 'rewards' && <RewardsScreen bookings={bookings} customerName={profile?.full_name ?? ''} />}
+          {currentScreen === 'rewards' && <RewardsScreen profile={profile} bookings={bookings} customerName={profile?.full_name ?? ''} />}
 
           {currentScreen === 'profile' && (
             <ProfileScreen
+              profile={profile}
               location={userLocation}
               favoritesCount={favorites.length}
               bookings={bookings}
@@ -1164,8 +1091,7 @@ export default function App() {
               onBack={handleBack}
               onOpenLocation={() => setCurrentScreen('location-modal')}
               customerId={user.id}
-              profile={profile}
-              onSaveProfile={handleSaveProfile}
+              onSaveProfile={(patch) => handleSaveProfile(patch)}
               onUploadAvatar={handleUploadAvatar}
             />
           )}
@@ -1188,6 +1114,7 @@ export default function App() {
 
           {currentScreen === 'settings' && (
             <SettingsScreen
+              profile={profile}
               onBack={handleBack}
               onNavigate={(s) => setCurrentScreen(s)}
               customerId={user.id}
@@ -1209,27 +1136,59 @@ export default function App() {
             />
           )}
 
-          {/* Safe Fallback for any unhandled screen state to prevent white screen */}
-              {!['welcome', 'home', 'search', 'salon-detail', 'checkout', 'bookings', 'favourites', 'rewards', 'profile', 'saved-addresses', 'support', 'settings', 'location-modal'].includes(currentScreen) && (
-                <HomeScreen
-                  location={userLocation}
-                  salons={salons}
-                  salonsLoading={salonsLoading}
-                  favorites={favorites}
-                  recentlyViewed={recentlyViewed}
-                  bookings={bookings}
-                  onToggleFavorite={handleToggleFavorite}
-                  onSelectSalon={handleSelectSalon}
-                  onNavigate={(s) => setCurrentScreen(s)}
-                  onOpenLocationSelector={() => setCurrentScreen('location-modal')}
-                  isAppointmentDismissed={isAppointmentDismissed}
-                  onDismissAppointment={() => setIsAppointmentDismissed(true)}
-                />
-              )}
+          {currentScreen === 'owner-dashboard' && (
+            <OwnerDashboard 
+              user={user} 
+              onNavigate={setCurrentScreen}
+              onLogout={async () => {
+                setUser(null);
+                await supabase?.auth.signOut();
+              }}
+            />
+          )}
+
+          {currentScreen === 'gp-dashboard' && (
+            <GrowthPartnerDashboard 
+              user={user} 
+              onNavigate={setCurrentScreen}
+              onLogout={async () => {
+                setUser(null);
+                await supabase?.auth.signOut();
+              }}
+            />
+          )}
+
+          {currentScreen === 'terms' && (
+            <LegalScreen type="terms" onBack={handleBack} />
+          )}
+
+          {currentScreen === 'privacy' && (
+            <LegalScreen type="privacy" onBack={handleBack} />
+          )}
+
+          {currentScreen === 'cancellation' && (
+            <LegalScreen type="cancellation" onBack={handleBack} />
+          )}
+
+          {!['welcome', 'home', 'search', 'salon-detail', 'checkout', 'bookings', 'favourites', 'rewards', 'profile', 'saved-addresses', 'support', 'settings', 'location-modal', 'owner-dashboard', 'gp-dashboard', 'terms', 'privacy', 'cancellation'].includes(currentScreen) && (
+            <HomeScreen
+              location={userLocation}
+              salons={salons}
+              salonsLoading={salonsLoading}
+              favorites={favorites}
+              recentlyViewed={recentlyViewed}
+              bookings={bookings}
+              onToggleFavorite={handleToggleFavorite}
+              onSelectSalon={handleSelectSalon}
+              onNavigate={(s) => setCurrentScreen(s)}
+              onOpenLocationSelector={() => setCurrentScreen('location-modal')}
+              isAppointmentDismissed={isAppointmentDismissed}
+              onDismissAppointment={() => setIsAppointmentDismissed(true)}
+            />
+          )}
           </div>
         </main>
 
-        {/* Floating Bottom Navigation */}
         {paymentWatch && (
           <PaymentStatusTracker
             bookingId={paymentWatch.bookingId}
@@ -1249,7 +1208,6 @@ export default function App() {
         />
       </div>
 
-      {/* Global Scan UPI QR Code Modal */}
       <ScanUpiQrModal
         isOpen={isGlobalScanQrOpen}
         onClose={() => setIsGlobalScanQrOpen(false)}
@@ -1269,7 +1227,6 @@ export default function App() {
         }}
       />
 
-      {/* Global Add UPI Modal for QR prefill */}
       <AddUpiModal
         isOpen={isGlobalAddUpiOpen}
         onClose={() => {
@@ -1320,9 +1277,6 @@ export default function App() {
                 }
               });
             } else {
-              // Native prompt not available yet — keep the modal's manual
-              // installation guide visible; never fake an install success.
-              console.log('beforeinstallprompt not fired yet; showing manual guide');
               setIsPwaDismissedPermanently(localStorage.getItem('nexora_pwa_dismissed') === 'true');
               return;
             }
@@ -1334,4 +1288,3 @@ export default function App() {
     </div>
   );
 }
-

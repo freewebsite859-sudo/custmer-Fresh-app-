@@ -10,6 +10,7 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
     password: '',
     confirmPassword: '',
     mobile: '',
+    role: 'customer' as 'customer' | 'business_user' | 'growth_partner',
     termsAccepted: false,
   });
   const [showPassword, setShowPassword] = useState(false);
@@ -68,7 +69,7 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
           data: {
             full_name: formData.fullName,
             mobile: formData.mobile,
-            signup_role: 'customer',
+            signup_role: formData.role,
           },
         },
       });
@@ -76,25 +77,23 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
       if (error) {
         alert('Sign up note: ' + (error.message || 'Please try again.'));
       } else if (data.session && data.user) {
-        // AUTO LOGIN (task STEP 3): Supabase returned a live session because
-        // email confirmation is disabled. The DB trigger handle_new_user has
-        // already created the single profiles row (platform_role='customer',
-        // is_active=true, ON CONFLICT DO NOTHING — never a duplicate).
-        // Best-effort: backfill name/phone on the row the trigger created.
+        // Consistent profile creation for unified auth (task STEP 3)
         try {
-          await supabase
-            .from('profiles')
-            .update({
+          await supabase.from('profiles').upsert(
+            {
+              id: data.user.id,
+              email: formData.email.trim().toLowerCase(),
               full_name: formData.fullName.trim(),
               phone: formData.mobile.trim() || null,
-              email: formData.email.trim().toLowerCase(),
-            })
-            .eq('id', data.user.id);
-        } catch {
-          // The trigger-created row is authoritative; this patch is cosmetic.
+              platform_role: formData.role,
+              is_active: true,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'id' }
+          );
+        } catch (pe) {
+          console.error('Profile upsert failed:', pe);
         }
-        // Nothing else to do: App's onAuthStateChange picks up the session,
-        // the customer role gate passes, and the app opens automatically.
         setSignedIn(true);
       } else if (data.user) {
         // Email confirmation still enabled — no session until the user
@@ -120,10 +119,23 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
 
         <div className="mb-8 text-center md:text-left">
           <h2 className="text-2xl font-bold text-[#26181c] mb-2">Create Account</h2>
-          <p className="text-sm text-[#5a3f47]">Create your Nexora customer account and book salons on any device.</p>
+          <p className="text-sm text-[#5a3f47]">Join Nexora and book luxury salon services on any device.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-[#26181c] ml-1">Account Role</label>
+            <select 
+              className="w-full bg-[#fcf9f8] border border-[#e8e8e8] rounded-xl px-4 py-3.5 text-sm text-[#26181c] focus:outline-none focus:border-[#e6007e] transition-colors" 
+              value={formData.role} 
+              onChange={(e) => setFormData({...formData, role: e.target.value as any})}
+            >
+              <option value="customer">Customer</option>
+              <option value="business_user">Shop Owner</option>
+              <option value="growth_partner">Growth Partner</option>
+            </select>
+          </div>
+
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-[#26181c] ml-1">Full Name</label>
             <input className="w-full bg-[#fcf9f8] border border-[#e8e8e8] rounded-xl px-4 py-3.5 text-sm text-[#26181c] focus:outline-none focus:border-[#e6007e] transition-colors" placeholder="e.g. Rahul Sharma" type="text" required onChange={(e) => setFormData({...formData, fullName: e.target.value})} />
