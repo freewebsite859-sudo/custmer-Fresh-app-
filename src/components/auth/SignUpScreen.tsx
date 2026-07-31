@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { Eye, EyeOff } from 'lucide-react';
-import { WELCOME_BG_URL, LOGO_SQUARE } from '../../data/mockData';
+import { LOGO_SQUARE } from '../../data/mockData';
+import { PLATFORM_ROLE_LABELS, type PlatformRole } from '../../lib/authRoles';
+import { updateProfile, waitForProfile } from '../../lib/profileRepository';
 
 export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}) => {
   const [formData, setFormData] = useState({
@@ -10,7 +12,7 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
     password: '',
     confirmPassword: '',
     mobile: '',
-    role: 'customer' as 'customer' | 'business_user' | 'growth_partner',
+    role: 'customer' as PlatformRole,
     termsAccepted: false,
   });
   const [showPassword, setShowPassword] = useState(false);
@@ -63,12 +65,12 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
         return;
       }
       const { data, error } = await supabase.auth.signUp({
-        email: formData.email,
+        email: formData.email.trim().toLowerCase(),
         password: formData.password,
         options: {
           data: {
-            full_name: formData.fullName,
-            mobile: formData.mobile,
+            full_name: formData.fullName.trim(),
+            mobile: formData.mobile.trim(),
             signup_role: formData.role,
           },
         },
@@ -77,28 +79,22 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
       if (error) {
         alert('Sign up note: ' + (error.message || 'Please try again.'));
       } else if (data.session && data.user) {
-        // Consistent profile creation for unified auth (task STEP 3)
         try {
-          await supabase.from('profiles').upsert(
-            {
-              id: data.user.id,
-              email: formData.email.trim().toLowerCase(),
+          const seededProfile = await waitForProfile(supabase, data.user.id, { attempts: 6, delayMs: 350 });
+          if (seededProfile) {
+            await updateProfile(supabase, data.user.id, {
               full_name: formData.fullName.trim(),
               phone: formData.mobile.trim() || null,
-              platform_role: formData.role,
-              is_active: true,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'id' }
-          );
-        } catch (pe) {
-          console.error('Profile upsert failed:', pe);
+            });
+          }
+        } catch (profileError) {
+          console.warn('Profile seed notice:', profileError);
         }
         setSignedIn(true);
       } else if (data.user) {
         // Email confirmation still enabled — no session until the user
         // confirms. Honest message (no fake auto-login claim).
-        alert('Registration submitted! Please confirm the account from the link in your email, then log in.');
+        alert(`Registration submitted for the ${PLATFORM_ROLE_LABELS[formData.role]} role. Please confirm the account from the link in your email, then log in.`);
       }
     } catch (err: any) {
       alert('Sign up server notice: ' + (err?.message || 'Connection offline or rate limit reached.'));
@@ -119,7 +115,7 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
 
         <div className="mb-8 text-center md:text-left">
           <h2 className="text-2xl font-bold text-[#26181c] mb-2">Create Account</h2>
-          <p className="text-sm text-[#5a3f47]">Join Nexora and book luxury salon services on any device.</p>
+          <p className="text-sm text-[#5a3f47]">Choose your role once — Supabase will keep your Nexora account, bookings and profile in sync across devices.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">

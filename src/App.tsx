@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase, supabaseConfigError } from './lib/supabaseClient';
-import { Screen, Salon, Service, Staff, Booking, UserLocation, AppNotification, ServiceReview, SavedProfessional, SavedService, UserProfile } from './types';
+import { Screen, Salon, Service, Staff, Booking, UserLocation, AppNotification, ServiceReview, SavedProfessional, SavedService } from './types';
 import {
   INITIAL_LOCATION,
 } from './data/mockData';
 import { fetchPublicSalons } from './lib/salonRepository';
 import { createCustomerBooking, createAdvanceOrder, loadRazorpayCheckout, openRazorpayAdvanceCheckout, listCustomerBookings, subscribeToCustomerBookings, CustomerBookingRow } from './lib/bookingRepository';
-import { loadProfile, updateProfile, uploadAvatar, avatarUrlWithVersion, subscribeToProfile, CustomerProfile, ProfilePatch } from './lib/profileRepository';
+import { loadProfile, waitForProfile, updateProfile, uploadAvatar, avatarUrlWithVersion, subscribeToProfile, CustomerProfile, ProfilePatch } from './lib/profileRepository';
 import { loadFavorites, setFavorite, subscribeToFavorites } from './lib/favoritesRepository';
 import { loadSettings, saveSettings, settingsFromLegacyLocalStorage, SETTINGS_DEFAULTS } from './lib/settingsRepository';
 import { loadAddresses, importLegacyAddresses } from './lib/addressesRepository';
@@ -45,6 +45,7 @@ import { Modal } from './components/Modal';
 import { OwnerDashboard } from './components/OwnerDashboard';
 import { GrowthPartnerDashboard } from './components/GrowthPartnerDashboard';
 import { LegalScreen } from './components/LegalScreen';
+import { dashboardScreenForRole, isPlatformRole } from './lib/authRoles';
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
@@ -85,15 +86,14 @@ export default function App() {
 
     const verifyPlatformAccess = async (
       authUser: { id: string }
-    ): Promise<{ allowed: boolean; role: string | null }> => {
-      const prof = await loadProfile(client, authUser.id);
-      if (!prof) return { allowed: false, role: null };
-      
-      const allowedRoles = ['customer', 'business_user', 'growth_partner'];
-      if (prof.is_active === true && allowedRoles.includes(prof.platform_role || '')) {
-        return { allowed: true, role: prof.platform_role };
+    ): Promise<{ allowed: boolean; role: string | null; profile: CustomerProfile | null }> => {
+      const prof = await waitForProfile(client, authUser.id, { attempts: 6, delayMs: 350 });
+      if (!prof) return { allowed: false, role: null, profile: null };
+
+      if (prof.is_active === true && isPlatformRole(prof.platform_role)) {
+        return { allowed: true, role: prof.platform_role, profile: prof };
       }
-      return { allowed: false, role: prof.platform_role || 'inactive' };
+      return { allowed: false, role: prof.platform_role || 'inactive', profile: prof };
     };
 
     const applySession = async (session: { user?: any } | null) => {
@@ -106,15 +106,15 @@ export default function App() {
         return;
       }
 
-      const { allowed, role } = await verifyPlatformAccess(authUser);
+      const { allowed, role, profile: resolvedProfile } = await verifyPlatformAccess(authUser);
       if (!isMounted) return;
 
-      if (allowed) {
+      if (allowed && role && isPlatformRole(role)) {
         setConflictRole(null);
+        setProfile(resolvedProfile);
         setUser({ ...authUser, role });
-        // Profile will be hydrated by the bootstrap useEffect.
-        if (role === 'business_user') setCurrentScreen('owner-dashboard');
-        else if (role === 'growth_partner') setCurrentScreen('gp-dashboard');
+        const nextScreen = dashboardScreenForRole(role);
+        if (nextScreen !== 'home') setCurrentScreen(nextScreen);
       } else {
         setUser(null);
         setProfile(null);
@@ -222,10 +222,8 @@ export default function App() {
   const [recentlyViewed, setRecentlyViewed] = useState<string[]>([]);
 
   useEffect(() => {
-    if (profile) {
-       setRecentlyViewed((profile as any).recently_viewed || []);
-    }
-  }, [profile?.updated_at]);
+    setRecentlyViewed(profile?.recently_viewed ?? []);
+  }, [profile?.recently_viewed, profile?.updated_at]);
 
   // Resolved against the live salon catalogue before rendering.
   const favoriteProfessionals: SavedProfessional[] = favoriteStaffIds.flatMap((staffId) => {
@@ -679,18 +677,15 @@ export default function App() {
     setSelectedSalon(salon);
     setSelectedServices(salon.services.length > 0 ? [salon.services[0]] : []);
     setSelectedStaff(salon.staff.length > 0 ? salon.staff[0] : null);
-    
-    if (user && profile) {
-      const newRecentlyViewed = [salon.id, ...recentlyViewed.filter(id => id !== salon.id)].slice(0, 10);
+
+    if (supabase && user) {
+      const newRecentlyViewed = [salon.id, ...recentlyViewed.filter((id) => id !== salon.id)].slice(0, 10);
       setRecentlyViewed(newRecentlyViewed);
-      
-      // Sync to DB immediately for cross-device visibility
-      await supabase?.from('profiles').update({
-        recently_viewed: newRecentlyViewed,
-        updated_at: new Date().toISOString()
-      }).eq('id', user.id);
+      updateProfile(supabase, user.id, { recently_viewed: newRecentlyViewed }).catch((e: any) => {
+        console.warn('Recently viewed sync notice:', e?.message || e);
+      });
     }
-    
+
     setCurrentScreen('salon-detail');
   };
 
@@ -802,6 +797,46 @@ export default function App() {
     };
     const updatedReviews = [created, ...currentReviews];
     localStorage.setItem(storageKey, JSON.stringify(updatedReviews));
+  };
+
+  const triggerPushNotificationForBooking = (bookingId?: string) => {
+    const targetBooking = bookingId
+      ? bookings.find((booking) => booking.id === bookingId)
+      : bookings.find((booking) => booking.status === 'CONFIRMED' || booking.status === 'PENDING');
+
+    if (!targetBooking) return;
+
+    const alertNotification: AppNotification = {
+      id: `local-reminder-${targetBooking.id}-${Date.now()}`,
+      bookingId: targetBooking.id,
+      salonName: targetBooking.salonName,
+      timeSlot: targetBooking.timeSlot,
+      dateStr: targetBooking.dateStr,
+      servicesSummary: targetBooking.services.map((service) => service.name).join(', '),
+      timestamp: Date.now(),
+      read: false,
+      type: 'reminder_1h',
+      message: `${targetBooking.salonName} starts at ${targetBooking.timeSlot} on ${targetBooking.dateStr}. ${targetBooking.services.map((service) => service.name).join(', ')} is ready to go.`,
+    };
+
+    setNotifications((prev) => [alertNotification, ...prev]);
+    setActivePushOverlay(alertNotification);
+
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      try {
+        const browserNotification = new Notification('Nexora appointment reminder', {
+          body: alertNotification.message,
+          icon: '/favicon.ico',
+          tag: `booking-reminder-${targetBooking.id}`,
+        });
+        browserNotification.onclick = () => {
+          window.focus();
+          setCurrentScreen('bookings');
+        };
+      } catch (error) {
+        console.warn('Browser notification notice:', error);
+      }
+    }
   };
 
   const handleSnoozeNotification = (id: string) => {

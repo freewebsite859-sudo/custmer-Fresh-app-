@@ -20,10 +20,13 @@ export interface CustomerProfile {
   is_active: boolean | null;
   created_at: string | null;
   updated_at: string | null;
+  recently_viewed?: string[] | null;
+  loyalty_points?: number | null;
+  wallet_balance_paise?: number | null;
 }
 
 const PROFILE_COLUMNS =
-  'id, email, full_name, phone, photo_url, preferred_city, preferred_area, gender, date_of_birth, platform_role, is_active, created_at, updated_at';
+  'id, email, full_name, phone, photo_url, preferred_city, preferred_area, gender, date_of_birth, platform_role, is_active, created_at, updated_at, recently_viewed';
 
 export type ProfilePatch = Partial<
   Pick<
@@ -35,6 +38,7 @@ export type ProfilePatch = Partial<
     | 'preferred_area'
     | 'gender'
     | 'date_of_birth'
+    | 'recently_viewed'
   >
 >;
 
@@ -51,6 +55,25 @@ export async function loadProfile(
   return (data as CustomerProfile | null) ?? null;
 }
 
+export async function waitForProfile(
+  client: SupabaseClient,
+  userId: string,
+  options?: { attempts?: number; delayMs?: number },
+): Promise<CustomerProfile | null> {
+  const attempts = Math.max(1, options?.attempts ?? 6);
+  const delayMs = Math.max(100, options?.delayMs ?? 350);
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const profile = await loadProfile(client, userId);
+    if (profile) return profile;
+    if (attempt < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
+    }
+  }
+
+  return null;
+}
+
 /** UPDATE-only write. Role/is_active are NEVER sent from the client. */
 export async function updateProfile(
   client: SupabaseClient,
@@ -60,6 +83,12 @@ export async function updateProfile(
   const safePatch: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
+    if (key === 'recently_viewed') {
+      safePatch[key] = Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).slice(0, 10)
+        : [];
+      continue;
+    }
     safePatch[key] = typeof value === 'string' ? value.trim() || null : value;
   }
   const { data, error } = await client

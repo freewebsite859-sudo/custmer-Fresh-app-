@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { Eye, EyeOff } from 'lucide-react';
-import { WELCOME_BG_URL, LOGO_SQUARE } from '../../data/mockData';
+import { LOGO_SQUARE } from '../../data/mockData';
 
 export const LoginScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}) => {
   const [email, setEmail] = useState('');
@@ -99,7 +99,17 @@ export const LoginScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}
         {/* Content: Titles */}
         <div className="mb-8 text-center md:text-left">
           <h2 className="text-2xl font-bold text-[#26181c] mb-2">Welcome Back</h2>
-          <p className="text-sm text-[#5a3f47]">Log in with your Nexora customer account — your profile, bookings and favourites stay in sync on every device.</p>
+          <p className="text-sm text-[#5a3f47]">Log in once — Nexora will route Customers, Shop Owners and Growth Partners to the right workspace and keep everything synced on every device.</p>
+          <div className="mt-3 flex flex-wrap gap-2 justify-center md:justify-start">
+            {['Customer', 'Shop Owner', 'Growth Partner'].map((role) => (
+              <span
+                key={role}
+                className="rounded-full border border-[#f3c2dc] bg-[#fde7f3] px-3 py-1 text-[11px] font-bold text-[#8e004b]"
+              >
+                {role}
+              </span>
+            ))}
+          </div>
         </div>
 
         {/* Form */}
@@ -202,12 +212,12 @@ export const LoginScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}
         {/* Bottom Link */}
         <div className="mt-12 text-center pb-8 pb-safe">
           <p className="text-sm text-[#5a3f47]">
-            Want to become a Growth Partner?
+            Need a new Nexora account?
             <button 
               onClick={onToggleAuth}
               className="text-[#e6007e] font-bold hover:text-[#b90064] transition-colors ml-1"
             >
-              Apply Now
+              Sign Up
             </button>
           </p>
         </div>

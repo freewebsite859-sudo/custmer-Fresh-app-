@@ -122,7 +122,15 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
       triggerToast('Required fields missing.');
       return;
     }
-    const payload = { label: formLabel, flat_number: formFlatNumber, street: formStreet, landmark: formLandmark, city: formCity, pincode: formPincode, is_default: formIsDefault };
+    const payload = {
+      label: formLabel,
+      flatNumber: formFlatNumber,
+      street: formStreet,
+      landmark: formLandmark,
+      city: formCity,
+      pincode: formPincode,
+      isDefault: formIsDefault,
+    };
     const makeDefault = formIsDefault || addresses.length === 0;
     setIsSaving(true);
     const op = selectedAddress
