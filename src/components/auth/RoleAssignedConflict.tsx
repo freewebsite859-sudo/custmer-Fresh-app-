@@ -1,5 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
+import { roleLabel } from '../../lib/authRoles';
 
 interface RoleAssignedConflictProps {
   existingRole?: string;
@@ -14,6 +15,8 @@ export const RoleAssignedConflict: React.FC<RoleAssignedConflictProps> = ({
   onUseAnotherEmail,
   onContactSupport,
 }) => {
+  const existingRoleLabel = roleLabel(existingRole);
+
   return (
     <div className="fixed inset-0 z-[60] bg-[#fcf9f8] text-[#26181c] font-sans overflow-hidden flex flex-col">
       {/* Subtle Ambient Background Decoration */}
@@ -53,7 +56,7 @@ export const RoleAssignedConflict: React.FC<RoleAssignedConflictProps> = ({
             Role Already Assigned
           </h1>
           <p className="text-sm text-[#5a3f47] leading-relaxed">
-            यह email पहले से <span className="text-[#e6007e] font-semibold">[{existingRole}]</span> account से जुड़ी है।
+            यह email पहले से <span className="text-[#e6007e] font-semibold">[{existingRoleLabel}]</span> account से जुड़ी है।
           </p>
           <p className="text-xs text-[#5a3f47]/80 mt-1">
             एक email से केवल एक role बनाया जा सकता है। दूसरे role के लिए दूसरी email ID इस्तेमाल करें।

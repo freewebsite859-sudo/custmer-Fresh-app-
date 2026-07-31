@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { InstallApp } from './InstallApp';
 import { supabase } from '../lib/supabaseClient';
-import { UserProfile } from '../types';
+import type { CustomerProfile } from '../lib/profileRepository';
 import {
   CustomerSettings,
   SETTINGS_DEFAULTS,
@@ -11,7 +11,7 @@ import {
 } from '../lib/settingsRepository';
 
 interface SettingsScreenProps {
-  profile: UserProfile | null;
+  profile: CustomerProfile | null;
   onBack: () => void;
   onNavigate: (screen: any) => void;
   onLogout?: () => void;

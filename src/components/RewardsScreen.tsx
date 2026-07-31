@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Booking, LoyaltyTier, UserProfile } from '../types';
+import { Booking, LoyaltyTier } from '../types';
+import { supabase } from '../lib/supabaseClient';
+import type { CustomerProfile } from '../lib/profileRepository';
 
 interface RewardsScreenProps {
-  profile: UserProfile | null;
+  profile: CustomerProfile | null;
   bookings?: Booking[];
   customerName?: string;
 }

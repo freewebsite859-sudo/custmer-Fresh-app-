@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { JAIPUR_LOCATIONS } from '../data/locations';
 import { supabase } from '../lib/supabaseClient';
-import { Screen, UserLocation, Booking, Address, UserProfile } from '../types';
+import { Screen, UserLocation, Booking, Address } from '../types';
 import { CustomerProfile, ProfilePatch, avatarUrlWithVersion } from '../lib/profileRepository';
 import {
   loadPaymentMethods, addUpiMethod, addCardMethod, deletePaymentMethod, subscribeToPaymentMethods,
@@ -410,6 +410,28 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const handleSetDefaultAddress = (addrId: string) => {
     if (!supabase || !customerId) return;
     setDefaultAddress(supabase, customerId, addrId).then(setSavedAddresses).then(() => triggerToast('Default updated!'));
+  };
+
+  const resetAddressForm = (defaults?: Partial<Address>) => {
+    setFormLabel(defaults?.label ?? 'Home');
+    setFormFlat(defaults?.flatNumber ?? '');
+    setFormStreet(defaults?.street ?? '');
+    setFormLandmark(defaults?.landmark ?? '');
+    setFormCity(defaults?.city ?? 'Jaipur');
+    setFormPincode(defaults?.pincode ?? '');
+    setFormIsDefault(defaults?.isDefault ?? savedAddresses.length === 0);
+  };
+
+  const handleAddNewAddressInit = () => {
+    setSelectedAddressForEdit(null);
+    resetAddressForm();
+    setAddressView('add');
+  };
+
+  const handleEditAddressInit = (address: Address) => {
+    setSelectedAddressForEdit(address);
+    resetAddressForm(address);
+    setAddressView('edit');
   };
 
   const handleSaveAddressForm = async () => {
