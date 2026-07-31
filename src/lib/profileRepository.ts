@@ -8,7 +8,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 export interface CustomerProfile {
   id: string;
-  email: string | null;
   full_name: string | null;
   phone: string | null;
   photo_url: string | null;
@@ -26,7 +25,7 @@ export interface CustomerProfile {
 }
 
 const PROFILE_COLUMNS =
-  'id, email, full_name, phone, photo_url, preferred_city, preferred_area, gender, date_of_birth, platform_role, is_active, created_at, updated_at, recently_viewed';
+  'id, full_name, phone, photo_url, preferred_city, preferred_area, gender, date_of_birth, platform_role, is_active, created_at, updated_at, recently_viewed';
 
 export type ProfilePatch = Partial<
   Pick<

@@ -1128,6 +1128,7 @@ export default function App() {
               customerId={user.id}
               onSaveProfile={(patch) => handleSaveProfile(patch)}
               onUploadAvatar={handleUploadAvatar}
+              userEmail={user?.email ?? ''}
             />
           )}
 
