@@ -1,41 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { SavedUpi } from './AddUpiModal';
 
 interface RecentlyScannedUpiListProps {
+  upis?: SavedUpi[];
   onDeleteUpi?: (id: string) => void;
   onSelectUpi?: (upi: SavedUpi) => void;
 }
 
 export const RecentlyScannedUpiList: React.FC<RecentlyScannedUpiListProps> = ({
+  upis = [],
   onDeleteUpi,
   onSelectUpi,
 }) => {
-  const [scannedList, setScannedList] = useState<SavedUpi[]>([]);
+  // QR-scanned UPIs arrive from the synced saved_payment_methods list (parent);
+  // nothing is read from device storage anymore.
+  const scannedList = upis.filter((item) => item.isQrScanned).slice(0, 3);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  const loadScannedUpis = () => {
-    try {
-      const saved = localStorage.getItem('nexora_saved_upis');
-      if (saved) {
-        const parsed: SavedUpi[] = JSON.parse(saved);
-        const qrScanned = parsed.filter((item) => item.isQrScanned);
-        setScannedList(qrScanned.slice(0, 3));
-      } else {
-        setScannedList([]);
-      }
-    } catch (e) {
-      console.warn('Failed to parse nexora_saved_upis:', e);
-    }
-  };
-
-  useEffect(() => {
-    loadScannedUpis();
-
-    // Listen for storage events across tabs or local updates
-    const handleStorage = () => loadScannedUpis();
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, []);
 
   const handleCopy = (upiId: string, id: string) => {
     navigator.clipboard.writeText(upiId);
@@ -44,21 +24,7 @@ export const RecentlyScannedUpiList: React.FC<RecentlyScannedUpiListProps> = ({
   };
 
   const handleDelete = (id: string) => {
-    if (onDeleteUpi) {
-      onDeleteUpi(id);
-    } else {
-      try {
-        const saved = localStorage.getItem('nexora_saved_upis');
-        if (saved) {
-          const parsed: SavedUpi[] = JSON.parse(saved);
-          const updated = parsed.filter((item) => item.id !== id);
-          localStorage.setItem('nexora_saved_upis', JSON.stringify(updated));
-          setScannedList(updated.filter((item) => item.isQrScanned).slice(0, 3));
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    }
+    if (onDeleteUpi) onDeleteUpi(id);
   };
 
   return (

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexora-v3';
+const CACHE_NAME = 'nexora-v4';
 const SYNC_APPOINTMENTS = 'sync-appointments';
 
 // Assets to cache immediately on install

@@ -23,15 +23,15 @@ export const NexoraLeaderboardSection: React.FC<NexoraLeaderboardSectionProps> =
   const leaderboard = React.useMemo(() => {
     return [...salons]
       .map((s) => {
-        const completed = s.completedBookings || Math.floor(s.rating * 85);
-        const reviews = s.verifiedReviewsCount || s.reviewsCount || s.reviewCount || Math.floor(s.rating * 35);
-        const satisfactionScore = Math.min(99.8, Math.max(94.0, Number((96.5 + (s.rating - 4.2) * 3.5).toFixed(1))));
+        // Honest numbers only: when the backend has no completed-booking or
+        // review counters yet, show 0 — never estimate from the star rating.
+        const completed = s.completedBookings ?? 0;
+        const reviews = s.verifiedReviewsCount ?? s.reviewsCount ?? s.reviewCount ?? 0;
 
         return {
           ...s,
           completedBookingsCalculated: completed,
           reviewsCountCalculated: reviews,
-          satisfactionRateCalculated: satisfactionScore,
         };
       })
       .sort((a, b) => {
@@ -69,7 +69,7 @@ export const NexoraLeaderboardSection: React.FC<NexoraLeaderboardSectionProps> =
                 </span>
               </div>
               <p className="text-[11px] text-[#594047] truncate font-medium">
-                Ranked by verified completed bookings & customer satisfaction
+                Ranked by completed bookings & customer ratings
               </p>
             </div>
           </div>
@@ -233,10 +233,10 @@ export const NexoraLeaderboardSection: React.FC<NexoraLeaderboardSectionProps> =
 
             <div className="flex flex-col justify-center items-center">
               <span className="text-[10px] text-pink-200 font-bold uppercase tracking-wider">
-                Satisfaction
+                Starting
               </span>
               <span className="text-[13px] sm:text-sm font-extrabold text-emerald-300 mt-0.5">
-                {topSalon.satisfactionRateCalculated}%
+                ₹{topSalon.startingPrice.toLocaleString('en-IN')}
               </span>
             </div>
           </div>

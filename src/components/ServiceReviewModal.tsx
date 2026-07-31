@@ -7,6 +7,7 @@ interface ServiceReviewModalProps {
   salon: Salon;
   preselectedServiceId?: string;
   initialRating?: number;
+  authorName?: string;
   onSubmitReview: (newReview: Omit<ServiceReview, 'id' | 'date'>) => void;
 }
 
@@ -16,12 +17,15 @@ export const ServiceReviewModal: React.FC<ServiceReviewModalProps> = ({
   salon,
   preselectedServiceId,
   initialRating,
+  authorName = 'Customer',
   onSubmitReview,
 }) => {
   const [selectedServiceId, setSelectedServiceId] = useState<string>('');
   const [rating, setRating] = useState<number>(5);
   const [hoverRating, setHoverRating] = useState<number>(0);
-  const [author, setAuthor] = useState<string>(() => localStorage.getItem('profile_name') || 'Customer');
+  const [author, setAuthor] = useState<string>(authorName);
+  // Keep the editor aligned with the signed-in profile name.
+  React.useEffect(() => { setAuthor(authorName); }, [authorName]);
   const [comment, setComment] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [submittedSuccess, setSubmittedSuccess] = useState<boolean>(false);
@@ -64,7 +68,7 @@ export const ServiceReviewModal: React.FC<ServiceReviewModalProps> = ({
       author: author.trim() || 'Verified Client',
       rating,
       comment: comment.trim(),
-      verifiedBooking: true,
+      verifiedBooking: false, // device-local review — never claim server verification
     });
 
     setSubmittedSuccess(true);

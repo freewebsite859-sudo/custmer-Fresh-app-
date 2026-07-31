@@ -15,10 +15,12 @@ interface BookingsScreenProps {
   onMarkBookingReviewed: (bookingId: string) => void;
   initialSelectedBookingId?: string;
   onTrackPayment?: (booking: Booking) => void;
+  customerName?: string;
 }
 
 export const BookingsScreen: React.FC<BookingsScreenProps> = ({
   bookings,
+  customerName = '',
   salons,
   onNavigate,
   onCancelBooking,
@@ -449,6 +451,7 @@ export const BookingsScreen: React.FC<BookingsScreenProps> = ({
           onClose={() => setReviewModalBooking(null)}
           salon={targetSalonForReview}
           preselectedServiceId={reviewModalBooking.services[0]?.id}
+          authorName={customerName || 'Customer'}
           onSubmitReview={(newReview) => {
             onAddReview(reviewModalBooking.salonId, newReview);
             onMarkBookingReviewed(reviewModalBooking.id);

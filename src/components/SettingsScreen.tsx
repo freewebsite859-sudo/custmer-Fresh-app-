@@ -1,57 +1,49 @@
 import React, { useState, useEffect } from 'react';
 import { InstallApp } from './InstallApp';
+import { supabase } from '../lib/supabaseClient';
+import {
+  CustomerSettings,
+  SETTINGS_DEFAULTS,
+  loadSettings,
+  saveSettings,
+  subscribeToSettings,
+} from '../lib/settingsRepository';
 
 interface SettingsScreenProps {
   onBack: () => void;
   onNavigate: (screen: any) => void;
   onLogout?: () => void;
+  customerId?: string;
+  currentLocationName?: string;
 }
 
 export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onBack,
   onNavigate,
   onLogout,
+  customerId,
+  currentLocationName,
 }) => {
-  // Notification states with localStorage syncing
-  const [bookingUpdates, setBookingUpdates] = useState(() => {
-    return localStorage.getItem('settings_booking_updates') !== 'false';
-  });
-  const [appointmentReminders, setAppointmentReminders] = useState(() => {
-    return localStorage.getItem('settings_appt_reminders') !== 'false';
-  });
-  const [rewardsUpdates, setRewardsUpdates] = useState(() => {
-    return localStorage.getItem('settings_rewards_updates') !== 'false';
-  });
-  const [offersPromo, setOffersPromo] = useState(() => {
-    return localStorage.getItem('settings_offers_promo') !== 'false';
-  });
-  const [emailNotifs, setEmailNotifs] = useState(() => {
-    return localStorage.getItem('settings_email_notifs') !== 'false';
-  });
-  const [pushNotifs, setPushNotifs] = useState(() => {
-    return localStorage.getItem('settings_push_notifs') !== 'false';
-  });
+  // Settings live in customer_settings (one row per user). Every change is
+  // written to Supabase immediately and Realtime pushes it to all devices.
+  const [settings, setSettings] = useState<CustomerSettings>(SETTINGS_DEFAULTS);
+  const [cloudReady, setCloudReady] = useState(false);
 
-  // Location states
-  const [preferredLoc, setPreferredLoc] = useState(() => {
-    return localStorage.getItem('user_location_name') || 'San Francisco, CA';
-  });
-  const [useLocAuto, setUseLocAuto] = useState(() => {
-    return localStorage.getItem('settings_use_loc_auto') !== 'false';
-  });
+  const {
+    booking_updates: bookingUpdates,
+    appointment_reminders: appointmentReminders,
+    rewards_updates: rewardsUpdates,
+    offers_promotions: offersPromo,
+    email_notifications: emailNotifs,
+    push_notifications: pushNotifs,
+    auto_location: useLocAuto,
+    language,
+    display_mode: displayMode,
+  } = settings;
 
-  // Language state
-  const [language, setLanguage] = useState(() => {
-    return localStorage.getItem('settings_language') || 'english';
-  });
-
-  // Display state
-  const [displayMode, setDisplayMode] = useState(() => {
-    return localStorage.getItem('settings_display_mode') || 'device';
-  });
+  const preferredLoc = currentLocationName?.trim() || 'Not set on this device';
 
   // Loading / Interaction states
-  const [isUpdating, setIsUpdating] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showInstallModal, setShowInstallModal] = useState(false);
@@ -61,33 +53,49 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Sync state changes to localStorage and trigger feedback
-  const handleToggle = (key: string, val: boolean, setter: (v: boolean) => void, label: string) => {
-    setter(val);
-    localStorage.setItem(key, String(val));
-    triggerToast(`${label} is now ${val ? 'enabled' : 'disabled'}`);
+  useEffect(() => {
+    if (!supabase || !customerId) return;
+    let active = true;
+    loadSettings(supabase, customerId)
+      .then(({ settings: loaded }) => {
+        if (active) {
+          setSettings(loaded);
+          setCloudReady(true);
+        }
+      })
+      .catch((e) => console.warn('Settings load notice:', e?.message || e));
+    const unsubscribe = subscribeToSettings(supabase, customerId, (remote) => {
+      setSettings(remote);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [customerId]);
+
+  const applySettings = (next: CustomerSettings, toastMsg: string) => {
+    setSettings(next);
+    triggerToast(toastMsg);
+    if (supabase && customerId) {
+      saveSettings(supabase, customerId, next).catch((e) => {
+        console.warn('Settings save notice:', e?.message || e);
+        triggerToast('Could not sync right now — will retry on next change.');
+      });
+    }
+  };
+
+  const handleToggle = (field: keyof CustomerSettings, label: string) => {
+    const current = settings[field];
+    if (typeof current !== 'boolean') return;
+    applySettings({ ...settings, [field]: !current }, `${label} is now ${!current ? 'enabled' : 'disabled'}`);
   };
 
   const handleLanguageChange = (lang: string) => {
-    setLanguage(lang);
-    localStorage.setItem('settings_language', lang);
-    triggerToast(lang === 'english' ? 'Language set to English' : 'भाषा हिन्दी में बदली गई');
+    applySettings({ ...settings, language: lang }, lang === 'english' ? 'Language set to English' : 'भाषा हिन्दी में बदली गई');
   };
 
-  const handleDisplayChange = (mode: string) => {
-    setDisplayMode(mode);
-    localStorage.setItem('settings_display_mode', mode);
-    triggerToast(mode === 'device' ? 'Theme matched to Device setting' : 'Light Mode theme set as default');
-  };
-
-  const handleCheckUpdates = () => {
-    if (isUpdating) return;
-    setIsUpdating(true);
-    triggerToast('Checking for updates...');
-    setTimeout(() => {
-      setIsUpdating(false);
-      triggerToast('Nexora is up to date! Version v2.4.0');
-    }, 1500);
+  const handleDisplayChange = (mode: CustomerSettings['display_mode']) => {
+    applySettings({ ...settings, display_mode: mode }, mode === 'device' ? 'Theme matched to Device setting' : 'Light Mode theme set as default');
   };
 
   const handleInstallApp = () => {
@@ -170,7 +178,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           <div className="bg-surface-container-lowest rounded-xl shadow-[0_2px_12px_rgba(0,0,0,0.03)] border border-[#e8e8e8] overflow-hidden">
             {/* Booking Updates */}
             <div
-              onClick={() => handleToggle('settings_booking_updates', !bookingUpdates, setBookingUpdates, 'Booking Updates')}
+              onClick={() => handleToggle('booking_updates', 'Booking Updates')}
               className="flex items-center justify-between p-4 bg-surface-container-lowest hover:bg-slate-50/50 transition-colors touch-manipulation cursor-pointer"
             >
               <span className="text-body text-on-surface font-medium">Booking Updates</span>
@@ -184,7 +192,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
             {/* Appointment Reminders */}
             <div
-              onClick={() => handleToggle('settings_appt_reminders', !appointmentReminders, setAppointmentReminders, 'Appointment Reminders')}
+              onClick={() => handleToggle('appointment_reminders', 'Appointment Reminders')}
               className="flex items-center justify-between p-4 bg-surface-container-lowest hover:bg-slate-50/50 transition-colors touch-manipulation cursor-pointer"
             >
               <span className="text-body text-on-surface font-medium">Appointment Reminders</span>
@@ -198,7 +206,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
             {/* Rewards Updates */}
             <div
-              onClick={() => handleToggle('settings_rewards_updates', !rewardsUpdates, setRewardsUpdates, 'Rewards Updates')}
+              onClick={() => handleToggle('rewards_updates', 'Rewards Updates')}
               className="flex items-center justify-between p-4 bg-surface-container-lowest hover:bg-slate-50/50 transition-colors touch-manipulation cursor-pointer"
             >
               <span className="text-body text-on-surface font-medium">Rewards Updates</span>
@@ -212,7 +220,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
             {/* Offers and Promotions */}
             <div
-              onClick={() => handleToggle('settings_offers_promo', !offersPromo, setOffersPromo, 'Offers and Promotions')}
+              onClick={() => handleToggle('offers_promotions', 'Offers and Promotions')}
               className="flex items-center justify-between p-4 bg-surface-container-lowest hover:bg-slate-50/50 transition-colors touch-manipulation cursor-pointer"
             >
               <span className="text-body text-on-surface font-medium">Offers and Promotions</span>
@@ -226,7 +234,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
             {/* Email Notifications */}
             <div
-              onClick={() => handleToggle('settings_email_notifs', !emailNotifs, setEmailNotifs, 'Email Notifications')}
+              onClick={() => handleToggle('email_notifications', 'Email Notifications')}
               className="flex items-center justify-between p-4 bg-surface-container-lowest hover:bg-slate-50/50 transition-colors touch-manipulation cursor-pointer"
             >
               <span className="text-body text-on-surface font-medium">Email Notifications</span>
@@ -240,7 +248,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
             {/* Push Notifications */}
             <div
-              onClick={() => handleToggle('settings_push_notifs', !pushNotifs, setPushNotifs, 'Push Notifications')}
+              onClick={() => handleToggle('push_notifications', 'Push Notifications')}
               className="flex items-center justify-between p-4 bg-surface-container-lowest hover:bg-slate-50/50 transition-colors touch-manipulation cursor-pointer"
             >
               <span className="text-body text-on-surface font-medium">Push Notifications</span>
@@ -271,7 +279,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             <div className="h-px bg-outline-subtle mx-4"></div>
 
             <div
-              onClick={() => handleToggle('settings_use_loc_auto', !useLocAuto, setUseLocAuto, 'Auto Location detection')}
+              onClick={() => handleToggle('auto_location', 'Auto Location detection')}
               className="flex items-center justify-between p-4 bg-surface-container-lowest hover:bg-slate-50/50 transition-colors touch-manipulation cursor-pointer"
             >
               <span className="text-body text-on-surface font-medium">Use Location Automatically</span>
@@ -394,19 +402,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             <div className="h-px bg-outline-subtle mx-4"></div>
 
             <button
-              onClick={handleCheckUpdates}
-              disabled={isUpdating}
-              className="w-full flex items-center justify-between p-4 bg-surface-container-lowest active:bg-slate-50 transition-colors text-left cursor-pointer disabled:opacity-75"
+              onClick={() => triggerToast('Nexora updates automatically in your browser — no action needed.')}
+              className="w-full flex items-center justify-between p-4 bg-surface-container-lowest active:bg-slate-50 transition-colors text-left cursor-pointer"
             >
               <div>
-                <span className="block text-body text-on-surface font-medium">Check for Updates</span>
-                <span className="block text-caption text-on-surface-variant mt-0.5">Version v2.4.0</span>
+                <span className="block text-body text-on-surface font-medium">App Updates</span>
+                <span className="block text-caption text-on-surface-variant mt-0.5">Web app — updates apply automatically{cloudReady ? ' · settings synced' : ''}</span>
               </div>
-              {isUpdating ? (
-                <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-              ) : (
-                <span className="material-symbols-outlined text-outline">refresh</span>
-              )}
+              <span className="material-symbols-outlined text-outline">refresh</span>
             </button>
           </div>
         </div>

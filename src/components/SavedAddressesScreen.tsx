@@ -1,48 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { Address } from '../types';
+import { supabase } from '../lib/supabaseClient';
+import {
+  loadAddresses,
+  addAddress,
+  updateAddress,
+  deleteAddress,
+  setDefaultAddress,
+  subscribeToAddresses,
+} from '../lib/addressesRepository';
 
 interface SavedAddressesScreenProps {
   onBack: () => void;
   onNavigate: (screen: any) => void;
+  customerId?: string;
 }
 
 export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
   onBack,
   onNavigate,
+  customerId,
 }) => {
-  const [addresses, setAddresses] = useState<Address[]>(() => {
-    const saved = localStorage.getItem('nexora_saved_addresses');
-    if (saved) return JSON.parse(saved);
-    return [
-      {
-        id: 'addr-1',
-        label: 'Home',
-        flatNumber: 'Apt 4B, The Zenith Apartments',
-        street: '124 Marina Boulevard',
-        city: 'San Francisco, CA',
-        pincode: '94123',
-        isDefault: true,
-      },
-      {
-        id: 'addr-2',
-        label: 'Work',
-        flatNumber: 'Nexora Headquarters, Floor 12',
-        street: '500 Tech Square',
-        city: 'San Francisco, CA',
-        pincode: '94105',
-        isDefault: false,
-      },
-      {
-        id: 'addr-3',
-        label: 'Mom\'s House',
-        flatNumber: '889 Pinecrest Drive',
-        street: 'Suburban Enclave',
-        city: 'San Mateo, CA',
-        pincode: '94401',
-        isDefault: false,
-      },
-    ];
-  });
+  // Addresses sync with the `addresses` table (single source of truth).
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
 
   const [view, setView] = useState<'list' | 'form'>('list');
   const [selectedAddress, setSelectedAddress] = useState<Address | null>(null);
@@ -52,15 +33,29 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
   const [formFlatNumber, setFormFlatNumber] = useState<string>('');
   const [formStreet, setFormStreet] = useState<string>('');
   const [formLandmark, setFormLandmark] = useState<string>('');
-  const [formCity, setFormCity] = useState<string>('San Francisco, CA');
+  const [formCity, setFormCity] = useState<string>('Jaipur');
   const [formPincode, setFormPincode] = useState<string>('');
   const [formIsDefault, setFormIsDefault] = useState<boolean>(false);
   const [isLocating, setIsLocating] = useState<boolean>(false);
   const [toast, setToast] = useState<string | null>(null);
 
+  const refresh = React.useCallback(async () => {
+    if (!supabase || !customerId) return;
+    try {
+      setAddresses(await loadAddresses(supabase, customerId));
+    } catch (e: any) {
+      console.warn('Addresses load notice:', e?.message || e);
+    }
+  }, [customerId]);
+
   useEffect(() => {
-    localStorage.setItem('nexora_saved_addresses', JSON.stringify(addresses));
-  }, [addresses]);
+    void refresh();
+    if (!supabase || !customerId) return;
+    const unsubscribe = subscribeToAddresses(supabase, customerId, () => {
+      void refresh();
+    });
+    return unsubscribe;
+  }, [refresh]);
 
   const triggerToast = (msg: string) => {
     setToast(msg);
@@ -68,25 +63,25 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
   };
 
   const handleSetDefault = (id: string) => {
-    setAddresses((prev) =>
-      prev.map((a) => ({
-        ...a,
-        isDefault: a.id === id,
-      }))
-    );
-    triggerToast('Default address updated!');
+    if (!supabase || !customerId) return;
+    setDefaultAddress(supabase, customerId, id)
+      .then(setAddresses)
+      .then(() => triggerToast('Default address updated!'))
+      .catch((e) => {
+        console.warn('Default address notice:', e?.message || e);
+        triggerToast('Could not update the default address right now.');
+      });
   };
 
   const handleDelete = (id: string) => {
-    setAddresses((prev) => {
-      const filtered = prev.filter((a) => a.id !== id);
-      // If default was deleted, make first remaining address default
-      if (filtered.length > 0 && !filtered.some((a) => a.isDefault)) {
-        filtered[0].isDefault = true;
-      }
-      return filtered;
-    });
-    triggerToast('Address deleted successfully!');
+    if (!supabase || !customerId) return;
+    deleteAddress(supabase, customerId, id)
+      .then(setAddresses)
+      .then(() => triggerToast('Address deleted successfully!'))
+      .catch((e) => {
+        console.warn('Delete address notice:', e?.message || e);
+        triggerToast('Could not delete the address right now.');
+      });
   };
 
   const handleOpenForm = (address?: Address) => {
@@ -105,25 +100,51 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
       setFormFlatNumber('');
       setFormStreet('');
       setFormLandmark('');
-      setFormCity('San Francisco, CA');
+      setFormCity('Jaipur');
       setFormPincode('');
       setFormIsDefault(addresses.length === 0);
     }
     setView('form');
   };
 
+  // Real GPS detection — reverse geocodes the actual device position.
   const handleLocateMe = () => {
+    if (isLocating) return;
+    if (!('geolocation' in navigator)) {
+      triggerToast('Geolocation is not supported on this device.');
+      return;
+    }
     setIsLocating(true);
-    triggerToast('Determining GPS Coordinates...');
-    setTimeout(() => {
-      setIsLocating(false);
-      setFormFlatNumber('Apt 12B, Oceanview Towers');
-      setFormStreet('88 Marina Boulevard');
-      setFormCity('San Francisco, CA');
-      setFormPincode('94123');
-      setFormLandmark('Near Marina Park');
-      triggerToast('GPS Address filled successfully!');
-    }, 1200);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          const resp = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
+            { headers: { 'Accept-Language': 'en' } },
+          );
+          if (!resp.ok) throw new Error(`geocoder HTTP ${resp.status}`);
+          const data = await resp.json();
+          const addr = data?.address || {};
+          const city = String(addr.city || addr.town || addr.county || addr.state_district || '');
+          const streetParts = [addr.road, addr.suburb || addr.neighbourhood || addr.residential].filter(Boolean);
+          if (addr.postcode) setFormPincode(String(addr.postcode));
+          if (city) setFormCity(city);
+          if (streetParts.length) setFormStreet(streetParts.join(', '));
+          if (addr.amenity || addr.building) setFormFlatNumber(String(addr.amenity || addr.building));
+          triggerToast(city ? `GPS address detected in ${city} — please verify before saving.` : 'GPS position found — please verify the address before saving.');
+        } catch {
+          triggerToast('Location lookup failed. Please enter the address manually.');
+        } finally {
+          setIsLocating(false);
+        }
+      },
+      (err) => {
+        setIsLocating(false);
+        triggerToast(err.code === 1 ? 'Location permission denied — please type the address.' : 'Could not get GPS position — please type the address.');
+      },
+      { timeout: 10000, maximumAge: 60000 },
+    );
   };
 
   const handleSave = (e: React.FormEvent) => {
@@ -132,8 +153,12 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
       triggerToast('Please fill in all required fields.');
       return;
     }
+    if (!supabase || !customerId) {
+      triggerToast('Saving addresses needs a signed-in account. Please log in again.');
+      return;
+    }
 
-    const newAddressData = {
+    const payload = {
       label: formLabel,
       flatNumber: formFlatNumber,
       street: formStreet,
@@ -142,42 +167,23 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
       pincode: formPincode,
       isDefault: formIsDefault,
     };
+    const makeDefault = formIsDefault || addresses.length === 0;
 
-    setAddresses((prev) => {
-      let updated: Address[];
-      if (selectedAddress) {
-        // Edit mode
-        updated = prev.map((a) =>
-          a.id === selectedAddress.id
-            ? { ...a, ...newAddressData }
-            : a
-        );
-      } else {
-        // Add mode
-        const newAddress: Address = {
-          id: `addr-${Date.now()}`,
-          ...newAddressData,
-        };
-        updated = [...prev, newAddress];
-      }
-
-      // Handle default constraint
-      if (formIsDefault) {
-        updated = updated.map((a) => ({
-          ...a,
-          isDefault: selectedAddress ? (a.id === selectedAddress.id ? true : false) : (a.id === updated[updated.length - 1].id ? true : false),
-        }));
-      } else if (!updated.some((a) => a.isDefault)) {
-        if (updated.length > 0) {
-          updated[0].isDefault = true;
-        }
-      }
-
-      return updated;
-    });
-
-    triggerToast(selectedAddress ? 'Address updated!' : 'Address added successfully!');
-    setView('list');
+    setIsSaving(true);
+    const op = selectedAddress
+      ? updateAddress(supabase, customerId, selectedAddress.id, payload, makeDefault)
+      : addAddress(supabase, customerId, payload, makeDefault);
+    op
+      .then(setAddresses)
+      .then(() => {
+        triggerToast(selectedAddress ? 'Address updated & synced!' : 'Address saved & synced!');
+        setView('list');
+      })
+      .catch((err: any) => {
+        console.warn('Save address notice:', err?.message || err);
+        triggerToast('Could not save the address right now — please try again.');
+      })
+      .finally(() => setIsSaving(false));
   };
 
   return (
@@ -395,7 +401,7 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
                 type="text"
                 value={formFlatNumber}
                 onChange={(e) => setFormFlatNumber(e.target.value)}
-                placeholder="e.g. Apt 4B"
+                placeholder="e.g. Flat 201, Pearl Residency"
                 className="w-full h-12 bg-white rounded-xl px-4 border border-[#e8e8e8] text-[13px] text-on-surface focus:outline-none focus:border-[#e6007e] transition-colors"
                 required
               />
@@ -408,7 +414,7 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
                 type="text"
                 value={formStreet}
                 onChange={(e) => setFormStreet(e.target.value)}
-                placeholder="e.g. Oxford Street"
+                placeholder="e.g. Jhotwara Road"
                 className="w-full h-12 bg-white rounded-xl px-4 border border-[#e8e8e8] text-[13px] text-on-surface focus:outline-none focus:border-[#e6007e] transition-colors"
                 required
               />
@@ -436,7 +442,7 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
                   type="text"
                   value={formCity}
                   onChange={(e) => setFormCity(e.target.value)}
-                  placeholder="San Francisco"
+                  placeholder="Jaipur"
                   className="w-full h-12 bg-white rounded-xl px-4 border border-[#e8e8e8] text-[13px] text-on-surface focus:outline-none focus:border-[#e6007e] transition-colors"
                   required
                 />
@@ -447,7 +453,7 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
                   type="text"
                   value={formPincode}
                   onChange={(e) => setFormPincode(e.target.value)}
-                  placeholder="94123"
+                  placeholder="302001"
                   className="w-full h-12 bg-white rounded-xl px-4 border border-[#e8e8e8] text-[13px] text-on-surface focus:outline-none focus:border-[#e6007e] transition-colors"
                   required
                 />

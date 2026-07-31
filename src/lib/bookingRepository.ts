@@ -158,3 +158,71 @@ export function openRazorpayAdvanceCheckout(
     },
   }).open();
 }
+
+// ---------------------------------------------------------------------------
+// Customer bookings list + realtime sync (task STEP 6: Bookings).
+// Server is the source of truth; UI Bookings are rebuilt from rows.
+// ---------------------------------------------------------------------------
+
+export interface CustomerBookingRow {
+  id: string;
+  salon_id: string;
+  appointment_start: string | null;
+  appointment_end: string | null;
+  status: string | null;
+  total_paise: number | null;
+  currency: string | null;
+  customer_note: string | null;
+  created_at: string | null;
+  cancelled_at: string | null;
+}
+
+const BOOKING_COLUMNS =
+  'id, salon_id, appointment_start, appointment_end, status, total_paise, currency, customer_note, created_at, cancelled_at';
+
+export async function listCustomerBookings(
+  client: SupabaseClient,
+  userId: string,
+): Promise<{ bookings: CustomerBookingRow[]; serviceIdsByBooking: Record<string, string[]> }> {
+  const { data: rows, error } = await client
+    .from('bookings')
+    .select(BOOKING_COLUMNS)
+    .eq('created_by', userId)
+    .order('appointment_start', { ascending: false })
+    .limit(50);
+  if (error) throw error;
+  const bookings = (rows ?? []) as CustomerBookingRow[];
+  const ids = bookings.map((b) => b.id);
+  const serviceIdsByBooking: Record<string, string[]> = {};
+  if (ids.length) {
+    const { data: items, error: itemsError } = await client
+      .from('booking_items')
+      .select('booking_id, service_id')
+      .in('booking_id', ids);
+    if (itemsError) throw itemsError;
+    for (const item of items ?? []) {
+      const key = String((item as any).booking_id);
+      if (!serviceIdsByBooking[key]) serviceIdsByBooking[key] = [];
+      serviceIdsByBooking[key].push(String((item as any).service_id));
+    }
+  }
+  return { bookings, serviceIdsByBooking };
+}
+
+export function subscribeToCustomerBookings(
+  client: SupabaseClient,
+  userId: string,
+  onChange: () => void,
+): () => void {
+  const channel = client
+    .channel(`nxu-bookings-${userId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'bookings', filter: `created_by=eq.${userId}` },
+      () => onChange(),
+    )
+    .subscribe();
+  return () => {
+    void client.removeChannel(channel);
+  };
+}

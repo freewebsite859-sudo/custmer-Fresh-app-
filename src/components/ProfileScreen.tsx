@@ -2,6 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { JAIPUR_LOCATIONS } from '../data/locations';
 import { supabase } from '../lib/supabaseClient';
 import { Screen, UserLocation, Booking, Address } from '../types';
+import { CustomerProfile, ProfilePatch, avatarUrlWithVersion } from '../lib/profileRepository';
+import {
+  loadPaymentMethods, addUpiMethod, addCardMethod, deletePaymentMethod, subscribeToPaymentMethods,
+} from '../lib/paymentMethodsRepository';
+import {
+  loadAddresses, addAddress, updateAddress, deleteAddress, setDefaultAddress, subscribeToAddresses,
+} from '../lib/addressesRepository';
+import {
+  CustomerSettings, SETTINGS_DEFAULTS, loadSettings, saveSettings, subscribeToSettings,
+} from '../lib/settingsRepository';
+import { submitFeedback } from '../lib/supportRepository';
 import { AddCardModal, SavedCard } from './AddCardModal';
 import { AddUpiModal, SavedUpi } from './AddUpiModal';
 import { ScanUpiQrModal } from './ScanUpiQrModal';
@@ -16,7 +27,10 @@ interface ProfileScreenProps {
   onNavigate: (screen: Screen) => void;
   onBack?: () => void;
   onOpenLocation: () => void;
-  onAvatarUpdate?: (avatar: string) => void;
+  customerId?: string;
+  profile?: CustomerProfile | null;
+  onSaveProfile?: (patch: ProfilePatch) => Promise<boolean>;
+  onUploadAvatar?: (file: File) => Promise<boolean>;
 }
 
 interface MenuItemProps {
@@ -58,27 +72,68 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onNavigate,
   onBack,
   onOpenLocation,
-  onAvatarUpdate,
+  customerId,
+  profile,
+  onSaveProfile,
+  onUploadAvatar,
 }) => {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
 
-  // Local states for customer profile
-  const [name, setName] = useState<string>(() => localStorage.getItem('profile_name') || 'Customer');
-  const [email, setEmail] = useState<string>(() => localStorage.getItem('profile_email') || '');
-  const [phone, setPhone] = useState<string>(() => localStorage.getItem('profile_phone') || '+91 98765 43210');
-  const [avatar, setAvatar] = useState<string>(() => localStorage.getItem('profile_avatar') || '/avatars/avatar-1.png');
-  const [selectedLanguage, setSelectedLanguage] = useState<string>(() => localStorage.getItem('profile_language') || 'English');
-  const [remindersEnabled, setRemindersEnabled] = useState<boolean>(() => localStorage.getItem('reminders_enabled') !== 'false');
-  const [autoPlayAmbiance, setAutoPlayAmbiance] = useState<boolean>(() => localStorage.getItem('autoplay_ambiance') === 'true');
-  const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => (localStorage.getItem('profile_theme') as 'light' | 'dark') || 'light');
-  
+  // Profile fields hydrate from the shared `profiles` row (Supabase = truth).
+  // Empty strings mean "not set yet" — no fabricated persona values.
+  const [name, setName] = useState<string>(profile?.full_name ?? '');
+  const [email, setEmail] = useState<string>(profile?.email ?? '');
+  const [phone, setPhone] = useState<string>(profile?.phone ?? '');
+  const [avatar, setAvatar] = useState<string>(avatarUrlWithVersion(profile ?? null));
+
+  // Settings (language/theme/reminders/ambience) sync via customer_settings.
+  const [settings, setSettings] = useState<CustomerSettings>(SETTINGS_DEFAULTS);
+  const selectedLanguage = settings.language === 'hindi' ? 'Hindi' : 'English';
+  const remindersEnabled = settings.appointment_reminders;
+  const autoPlayAmbiance = settings.autoplay_ambiance;
+  const themeMode: 'light' | 'dark' = settings.display_mode === 'dark' ? 'dark' : 'light';
+
   // Custom high fidelity profile details states
-  const [dob, setDob] = useState<string>(() => localStorage.getItem('profile_dob') || '1992-05-14');
-  const [gender, setGender] = useState<string>(() => localStorage.getItem('profile_gender') || 'female');
-  const [preferredCity, setPreferredCity] = useState<string>(() => localStorage.getItem('profile_city') || 'jaipur');
-  const [preferredArea, setPreferredArea] = useState<string>(() => localStorage.getItem('profile_area') || 'Jhotwara');
+  const [dob, setDob] = useState<string>(profile?.date_of_birth ?? '');
+  const [gender, setGender] = useState<string>(profile?.gender ?? '');
+  const [preferredCity, setPreferredCity] = useState<string>(profile?.preferred_city ?? 'jaipur');
+  const [preferredArea, setPreferredArea] = useState<string>(profile?.preferred_area ?? '');
+
+  // Re-hydrate whenever the shared profile row changes (login, own save,
+  // or a Realtime push from another device).
+  useEffect(() => {
+    if (!profile) return;
+    setName(profile.full_name ?? '');
+    setEmail(profile.email ?? '');
+    setPhone(profile.phone ?? '');
+    setAvatar(avatarUrlWithVersion(profile));
+    setDob(profile.date_of_birth ?? '');
+    setGender(profile.gender ?? '');
+    if (profile.preferred_city) setPreferredCity(profile.preferred_city);
+    if (profile.preferred_area !== null) setPreferredArea(profile.preferred_area ?? '');
+  }, [profile]);
+
+  // Settings row hydrate + realtime
+  useEffect(() => {
+    if (!supabase || !customerId) return;
+    let active = true;
+    loadSettings(supabase, customerId)
+      .then(({ settings: loaded }) => { if (active) setSettings(loaded); })
+      .catch((e) => console.warn('Settings load notice:', e?.message || e));
+    const unsub = subscribeToSettings(supabase, customerId, (remote) => setSettings(remote));
+    return () => { active = false; unsub(); };
+  }, [customerId]);
+
+  const applySettings = (next: CustomerSettings) => {
+    setSettings(next);
+    if (supabase && customerId) {
+      saveSettings(supabase, customerId, next).catch((e) =>
+        console.warn('Settings save notice:', e?.message || e),
+      );
+    }
+  };
 
   // Modal open states
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -102,122 +157,73 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
   const [prefilledUpiInput, setPrefilledUpiInput] = useState<string>('');
 
-  const [savedCards, setSavedCards] = useState<SavedCard[]>(() => {
-    const saved = localStorage.getItem('nexora_saved_cards');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved cards:', e);
-      }
-    }
-    return [
-      {
-        id: 'card-1',
-        cardNumber: '•••• •••• •••• 4242',
-        cardHolder: 'PRIYA SHARMA',
-        expiry: '12/26',
-        network: 'visa',
-        isPrimary: true,
-      },
-      {
-        id: 'card-2',
-        cardNumber: '•••• •••• •••• 8810',
-        cardHolder: 'PRIYA SHARMA',
-        expiry: '09/25',
-        network: 'mastercard',
-        isPrimary: false,
-      },
-    ];
-  });
+  const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
+  const [savedUpis, setSavedUpis] = useState<SavedUpi[]>([]);
 
-  const [savedUpis, setSavedUpis] = useState<SavedUpi[]>(() => {
-    const saved = localStorage.getItem('nexora_saved_upis');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved upis:', e);
-      }
+  const refreshPaymentMethods = React.useCallback(async () => {
+    if (!supabase || !customerId) return;
+    try {
+      const { upis, cards } = await loadPaymentMethods(supabase, customerId);
+      setSavedUpis(upis);
+      setSavedCards(cards);
+    } catch (e: any) {
+      console.warn('Payment methods load notice:', e?.message || e);
     }
-    return [
-      {
-        id: 'upi-qr-1',
-        upiId: 'amelia.stratton@okicici',
-        name: 'Amelia Stratton',
-        provider: 'okicici',
-        isVerified: true,
-        isQrScanned: true,
-        scannedAt: 'Today, 2:15 PM',
-      },
-      {
-        id: 'upi-qr-2',
-        upiId: 'nexora.salon@paytm',
-        name: 'Nexora Salon Payments',
-        provider: 'paytm',
-        isVerified: true,
-        isQrScanned: true,
-        scannedAt: 'Yesterday',
-      },
-      {
-        id: 'upi-1',
-        upiId: 'amelia.strat@okaxis',
-        name: 'Amelia Stratton',
-        provider: 'okaxis',
-        isVerified: true,
-        isQrScanned: false,
-      },
-      {
-        id: 'upi-2',
-        upiId: '9876543210@paytm',
-        name: 'Amelia Stratton',
-        provider: 'paytm',
-        isVerified: true,
-        isQrScanned: false,
-      },
-    ];
-  });
+  }, [customerId]);
 
-  // Reload saved upis when payment methods open
   useEffect(() => {
-    if (isPaymentMethodsOpen) {
-      const saved = localStorage.getItem('nexora_saved_upis');
-      if (saved) {
-        try {
-          setSavedUpis(JSON.parse(saved));
-        } catch (e) {
-          console.warn('Failed to parse saved upis:', e);
-        }
-      }
-    }
-  }, [isPaymentMethodsOpen]);
+    void refreshPaymentMethods();
+    if (!supabase || !customerId) return;
+    const unsubscribe = subscribeToPaymentMethods(supabase, customerId, () => {
+      void refreshPaymentMethods();
+    });
+    return unsubscribe;
+  }, [refreshPaymentMethods]);
 
   const handleCardAdded = (newCard: SavedCard) => {
-    const updated = [newCard, ...savedCards];
-    setSavedCards(updated);
-    localStorage.setItem('nexora_saved_cards', JSON.stringify(updated));
-    triggerToast('Card saved successfully!');
+    if (!supabase || !customerId) return;
+    const { id: _localId, ...payload } = newCard;
+    addCardMethod(supabase, customerId, payload)
+      .then(() => refreshPaymentMethods())
+      .then(() => triggerToast('Card saved & synced!'))
+      .catch((e) => {
+        console.warn('Card save notice:', e?.message || e);
+        triggerToast('Could not save the card right now.');
+      });
   };
 
   const handleDeleteCard = (cardId: string) => {
-    const updated = savedCards.filter((c) => c.id !== cardId);
-    setSavedCards(updated);
-    localStorage.setItem('nexora_saved_cards', JSON.stringify(updated));
-    triggerToast('Card removed');
+    if (!supabase || !customerId) return;
+    deletePaymentMethod(supabase, cardId)
+      .then(() => refreshPaymentMethods())
+      .then(() => triggerToast('Card removed'))
+      .catch((e) => {
+        console.warn('Card delete notice:', e?.message || e);
+        triggerToast('Could not remove the card right now.');
+      });
   };
 
   const handleUpiAdded = (newUpi: SavedUpi) => {
-    const updated = [newUpi, ...savedUpis];
-    setSavedUpis(updated);
-    localStorage.setItem('nexora_saved_upis', JSON.stringify(updated));
-    triggerToast('UPI ID linked successfully!');
+    if (!supabase || !customerId) return;
+    const { id: _localId, ...payload } = newUpi;
+    addUpiMethod(supabase, customerId, payload)
+      .then(() => refreshPaymentMethods())
+      .then(() => triggerToast('UPI ID linked & synced!'))
+      .catch((e) => {
+        console.warn('UPI save notice:', e?.message || e);
+        triggerToast('Could not save the UPI ID right now.');
+      });
   };
 
   const handleDeleteUpi = (upiId: string) => {
-    const updated = savedUpis.filter((u) => u.id !== upiId);
-    setSavedUpis(updated);
-    localStorage.setItem('nexora_saved_upis', JSON.stringify(updated));
-    triggerToast('UPI ID removed');
+    if (!supabase || !customerId) return;
+    deletePaymentMethod(supabase, upiId)
+      .then(() => refreshPaymentMethods())
+      .then(() => triggerToast('UPI ID removed'))
+      .catch((e) => {
+        console.warn('UPI delete notice:', e?.message || e);
+        triggerToast('Could not remove the UPI ID right now.');
+      });
   };
 
   // Feedback State
@@ -229,25 +235,23 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       triggerToast('Please select a star rating.');
       return;
     }
-    // Simple local storage persistence
-    const newFeedback = {
-      id: Date.now(),
-      rating: feedbackRating,
-      text: feedbackText,
-      date: new Date().toISOString()
-    };
-    let existing = [];
-    try {
-      existing = JSON.parse(localStorage.getItem('nexora_feedback') || '[]');
-    } catch (e) {
-      console.error('Failed to parse feedback:', e);
+    if (!supabase || !customerId) {
+      triggerToast('Feedback needs a signed-in account. Please log in again.');
+      return;
     }
-    localStorage.setItem('nexora_feedback', JSON.stringify([newFeedback, ...existing]));
-
+    const rating = feedbackRating;
+    const text = feedbackText;
+    submitFeedback(supabase, customerId, rating, text)
+      .then(() => {
+        triggerToast('Thank you — your feedback was saved to your account.');
+      })
+      .catch((e) => {
+        console.warn('Feedback save notice:', e?.message || e);
+        triggerToast('Could not save feedback right now — please try again.');
+      });
     setIsFeedbackOpen(false);
     setFeedbackRating(0);
     setFeedbackText('');
-    triggerToast('Thank you for your feedback!');
   };
 
   // Saved Addresses State
@@ -255,63 +259,39 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [addressView, setAddressView] = useState<'list' | 'add' | 'edit'>('list');
   const [selectedAddressForEdit, setSelectedAddressForEdit] = useState<Address | null>(null);
 
-  const [savedAddresses, setSavedAddresses] = useState<Address[]>(() => {
-    const saved = localStorage.getItem('nexora_saved_addresses');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved addresses:', e);
-      }
-    }
-    return [
-      {
-        id: 'addr-1',
-        label: 'Home',
-        flatNumber: 'Apt 4B, 4th Floor',
-        street: 'Hill Road, Bandra West',
-        landmark: 'Opposite Elco Arcade',
-        city: 'Mumbai',
-        pincode: '400050',
-        isDefault: true,
-      },
-      {
-        id: 'addr-2',
-        label: 'Office',
-        flatNumber: 'Godrej One, 3rd Floor',
-        street: 'Vikhroli East',
-        landmark: 'Near Eastern Express Highway',
-        city: 'Mumbai',
-        pincode: '400079',
-        isDefault: false,
-      }
-    ];
-  });
+  const [savedAddresses, setSavedAddresses] = useState<Address[]>([]);
 
-  React.useEffect(() => {
-    const saved = localStorage.getItem('nexora_saved_addresses');
-    if (saved) {
-      try {
-        setSavedAddresses(JSON.parse(saved));
-      } catch (e) {
-        console.error(e);
-      }
+  const refreshAddresses = React.useCallback(async () => {
+    if (!supabase || !customerId) return;
+    try {
+      setSavedAddresses(await loadAddresses(supabase, customerId));
+    } catch (e: any) {
+      console.warn('Addresses load notice:', e?.message || e);
     }
-  }, []);
+  }, [customerId]);
+
+  useEffect(() => {
+    void refreshAddresses();
+    if (!supabase || !customerId) return;
+    const unsubscribe = subscribeToAddresses(supabase, customerId, () => {
+      void refreshAddresses();
+    });
+    return unsubscribe;
+  }, [refreshAddresses]);
 
   // Form states for adding/editing addresses
   const [formLabel, setFormLabel] = useState<string>('Home');
   const [formFlat, setFormFlat] = useState<string>('');
   const [formStreet, setFormStreet] = useState<string>('');
   const [formLandmark, setFormLandmark] = useState<string>('');
-  const [formCity, setFormCity] = useState<string>('Mumbai');
+  const [formCity, setFormCity] = useState<string>('Jaipur');
   const [formPincode, setFormPincode] = useState<string>('');
   const [formIsDefault, setFormIsDefault] = useState<boolean>(false);
   const [isLocating, setIsLocating] = useState<boolean>(false);
 
   // Active support message state
   const [supportMessages, setSupportMessages] = useState<Array<{ sender: 'user' | 'bot'; text: string }>>([
-    { sender: 'bot', text: 'Hi! Welcome to Nexora Concierge. How can we help you today?' },
+    { sender: 'bot', text: 'Hi! I am the Nexora automated assistant. Ask me about bookings, payments or your profile.' },
   ]);
   const [supportInput, setSupportInput] = useState('');
 
@@ -347,49 +327,42 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     setIsSavingProfile(true);
 
     setName(tempName);
-    setEmail(tempEmail);
-    setPhone(tempPhone);
-    setAvatar(tempAvatar);
-    setDob(tempDob);
-    setGender(tempGender);
-    setPreferredCity(tempCity);
-    setPreferredArea(tempArea);
-
-    localStorage.setItem('profile_name', tempName);
-    localStorage.setItem('profile_email', tempEmail);
-    localStorage.setItem('profile_phone', tempPhone);
-    localStorage.setItem('profile_avatar', tempAvatar);
-    localStorage.setItem('profile_dob', tempDob);
-    localStorage.setItem('profile_gender', tempGender);
-    localStorage.setItem('profile_city', tempCity);
-    localStorage.setItem('profile_area', tempArea);
-
-    if (onAvatarUpdate) {
-      onAvatarUpdate(tempAvatar);
+    if (!onSaveProfile) {
+      setIsSavingProfile(false);
+      triggerToast('Profile saving is unavailable right now.');
+      return;
     }
 
-    // Best-effort cloud sync — only columns that exist in the profiles schema
-    // (full_name, mobile). Never overwrite platform_role or other fields.
-    let synced = false;
-    try {
-      if (supabase) {
-        const { data } = await supabase.auth.getSession();
-        const user = data.session?.user;
-        if (user) {
-          const { error } = await supabase.from('profiles').upsert(
-            { id: user.id, full_name: tempName.trim(), mobile: tempPhone.trim() || null },
-            { onConflict: 'id' }
-          );
-          synced = !error;
-        }
-      }
-    } catch {
-      synced = false;
+    const patch: ProfilePatch = {
+      full_name: tempName.trim(),
+      phone: tempPhone.trim() || null,
+      gender: tempGender.trim() || null,
+      date_of_birth: tempDob.trim() || null,
+      preferred_city: tempCity,
+      preferred_area: tempArea.trim() || null,
+    };
+    if (tempAvatar && !tempAvatar.startsWith('data:') && tempAvatar !== avatarUrlWithVersion(profile ?? null)) {
+      // A new non-uploaded URL only ever comes from an explicit user choice;
+      // uploads themselves go through onUploadAvatar (Supabase Storage).
+      patch.photo_url = tempAvatar;
     }
+    if (!tempAvatar) {
+      // User pressed Remove — clear the photo server-side too.
+      patch.photo_url = null;
+    }
+
+    const synced = await onSaveProfile(patch);
 
     setIsSavingProfile(false);
-    setIsEditOpen(false);
-    triggerToast(synced ? 'Profile updated & synced to your account.' : 'Profile updated on this device.');
+    if (synced) {
+      setIsEditOpen(false);
+      triggerToast('Profile saved & synced to all your devices.');
+    } else {
+      // Honest failure: revert the optimistic name so the screen never shows
+      // data that was not actually saved.
+      setName(profile?.full_name ?? '');
+      triggerToast('Could not sync the profile — your changes were not saved. Please try again.');
+    }
   };
 
   // Real GPS detection — reverse-geocodes to city/area and fills the form.
@@ -472,9 +445,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   const [isCopiedLink, setIsCopiedLink] = useState(false);
 
-  // Referral and Profile Deep-Link generation
-  const referralCode = `${name.toUpperCase().replace(/\s+/g, '')}150`;
-  const profileDeepLink = `${window.location.origin}/?user=${encodeURIComponent(name)}&tier=Gold&ref=${referralCode}`;
+  // Honest app-share link. Referral rewards & paid memberships are NOT launched
+  // yet — no fake codes, discounts or tier claims anywhere (PDR honesty rule).
+  const profileDeepLink = window.location.origin;
 
   const handleCopyProfileLink = () => {
     if (navigator.clipboard) {
@@ -490,7 +463,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const handleShareProfile = async () => {
     const shareData = {
       title: `${name}'s Nexora Beauty Passport`,
-      text: `Check out ${name}'s Gold Member status on Nexora Beauty! Use referral code "${referralCode}" for ₹150 off your first appointment:`,
+      text: `${name || 'I'} booked my salon appointment with Nexora — verified salons, secure 25% advance shown upfront. Try it:`,
       url: profileDeepLink,
     };
 
@@ -511,19 +484,20 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   // Handler for sending mock support messages
+  // Automated concierge replies — honest, policy-only, no human promises.
   const handleSendSupportMessage = (text: string) => {
     if (!text.trim()) return;
     setSupportMessages((prev) => [...prev, { sender: 'user', text }]);
     setSupportInput('');
 
     setTimeout(() => {
-      let reply = 'Thank you for reaching out. A premium concierge executive will assist you shortly.';
+      let reply = 'Nexora Assistant (automated): I can answer questions about bookings, payments and settings. For anything else, create a support ticket from Help Home.';
       if (text.toLowerCase().includes('booking') || text.toLowerCase().includes('cancel')) {
-        reply = 'You can reschedule or cancel any appointment directly from the Bookings tab up to 2 hours before the start time!';
+        reply = 'Nexora Assistant (automated): manage bookings from the Bookings tab. Same-day customer cancellation and no-show are not refundable; a salon cancellation qualifies your advance for a full refund via the verified payment flow.';
       } else if (text.toLowerCase().includes('payment') || text.toLowerCase().includes('refund')) {
-        reply = 'Refunds for online cancellations are processed within 3-5 business days directly to your original payment method.';
+        reply = 'Nexora Assistant (automated): the 25% advance is calculated on the server and shown before you pay. Approved refunds stay pending until the payment provider confirms processing.';
       } else if (text.toLowerCase().includes('gold') || text.toLowerCase().includes('membership')) {
-        reply = 'As a Gold Member, you enjoy a 1.5x rewards multiplier and priority scheduling automatically!';
+        reply = 'Nexora Assistant (automated): paid membership plans have not launched yet. Benefits, if any, will be listed in the app before you pay.';
       }
       setSupportMessages((prev) => [...prev, { sender: 'bot', text: reply }]);
     }, 800);
@@ -540,7 +514,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     setFormFlat('');
     setFormStreet('');
     setFormLandmark('');
-    setFormCity('Mumbai');
+    setFormCity('Jaipur');
     setFormPincode('');
     setFormIsDefault(savedAddresses.length === 0);
     setSelectedAddressForEdit(null);
@@ -560,23 +534,25 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   const handleDeleteAddress = (addrId: string) => {
-    const updated = savedAddresses.filter((a) => a.id !== addrId);
-    if (updated.length > 0 && !updated.some((a) => a.isDefault)) {
-      updated[0].isDefault = true;
-    }
-    setSavedAddresses(updated);
-    localStorage.setItem('nexora_saved_addresses', JSON.stringify(updated));
-    triggerToast('Address deleted successfully!');
+    if (!supabase || !customerId) return;
+    deleteAddress(supabase, customerId, addrId)
+      .then(setSavedAddresses)
+      .then(() => triggerToast('Address deleted successfully!'))
+      .catch((e) => {
+        console.warn('Delete address notice:', e?.message || e);
+        triggerToast('Could not delete the address right now.');
+      });
   };
 
   const handleSetDefaultAddress = (addrId: string) => {
-    const updated = savedAddresses.map((a) => ({
-      ...a,
-      isDefault: a.id === addrId,
-    }));
-    setSavedAddresses(updated);
-    localStorage.setItem('nexora_saved_addresses', JSON.stringify(updated));
-    triggerToast('Default address updated!');
+    if (!supabase || !customerId) return;
+    setDefaultAddress(supabase, customerId, addrId)
+      .then(setSavedAddresses)
+      .then(() => triggerToast('Default address updated!'))
+      .catch((e) => {
+        console.warn('Default address notice:', e?.message || e);
+        triggerToast('Could not update the default address right now.');
+      });
   };
 
   const handleSaveAddressForm = () => {
@@ -584,66 +560,77 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       triggerToast('Please fill in House/Flat No, Street, and PIN Code.');
       return;
     }
-
-    let updatedList: Address[] = [];
-
-    if (addressView === 'add') {
-      const newAddr: Address = {
-        id: `addr-${Date.now()}`,
-        label: formLabel,
-        flatNumber: formFlat,
-        street: formStreet,
-        landmark: formLandmark,
-        city: formCity,
-        pincode: formPincode,
-        isDefault: formIsDefault || savedAddresses.length === 0,
-      };
-
-      if (newAddr.isDefault) {
-        updatedList = savedAddresses.map((a) => ({ ...a, isDefault: false }));
-        updatedList.push(newAddr);
-      } else {
-        updatedList = [...savedAddresses, newAddr];
-      }
-      triggerToast('Address added successfully!');
-    } else {
-      // Edit mode
-      if (!selectedAddressForEdit) return;
-      updatedList = savedAddresses.map((a) => {
-        if (a.id === selectedAddressForEdit.id) {
-          return {
-            ...a,
-            label: formLabel,
-            flatNumber: formFlat,
-            street: formStreet,
-            landmark: formLandmark,
-            city: formCity,
-            pincode: formPincode,
-            isDefault: formIsDefault,
-          };
-        }
-        return formIsDefault ? { ...a, isDefault: false } : a;
-      });
-      triggerToast('Address updated successfully!');
+    if (!supabase || !customerId) {
+      triggerToast('Saving addresses needs a signed-in account. Please log in again.');
+      return;
     }
 
-    setSavedAddresses(updatedList);
-    localStorage.setItem('nexora_saved_addresses', JSON.stringify(updatedList));
-    setAddressView('list');
+    const payload = {
+      label: formLabel,
+      flatNumber: formFlat,
+      street: formStreet,
+      landmark: formLandmark,
+      city: formCity,
+      pincode: formPincode,
+      isDefault: formIsDefault,
+    };
+    const makeDefault = formIsDefault || savedAddresses.length === 0;
+    const op = addressView === 'add'
+      ? addAddress(supabase, customerId, payload, makeDefault)
+      : selectedAddressForEdit
+        ? updateAddress(supabase, customerId, selectedAddressForEdit.id, payload, makeDefault)
+        : null;
+    if (!op) return;
+    op
+      .then(setSavedAddresses)
+      .then(() => {
+        triggerToast(addressView === 'add' ? 'Address saved & synced!' : 'Address updated & synced!');
+        setAddressView('list');
+      })
+      .catch((e: any) => {
+        console.warn('Save address notice:', e?.message || e);
+        triggerToast('Could not save the address right now — please try again.');
+      });
   };
 
+  // Real GPS detection for the address form — no hardcoded fills.
   const handleLocateMeInForm = () => {
+    if (isLocating) return;
+    if (!('geolocation' in navigator)) {
+      triggerToast('Geolocation is not supported on this device.');
+      return;
+    }
     setIsLocating(true);
-    triggerToast('Determining GPS Coordinates...');
-    setTimeout(() => {
-      setIsLocating(false);
-      setFormFlat('Apartment 402, Signature Towers');
-      setFormStreet('Bandra West');
-      setFormCity('Mumbai');
-      setFormPincode('400050');
-      setFormLandmark('Opposite Elco Arcade');
-      triggerToast('GPS Address filled successfully!');
-    }, 1200);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          const resp = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
+            { headers: { 'Accept-Language': 'en' } },
+          );
+          if (!resp.ok) throw new Error(`geocoder HTTP ${resp.status}`);
+          const data = await resp.json();
+          const addr = data?.address || {};
+          const city = String(addr.city || addr.town || addr.county || addr.state_district || '');
+          const streetParts = [addr.road, addr.suburb || addr.neighbourhood || addr.residential].filter(Boolean);
+          if (addr.postcode) setFormPincode(String(addr.postcode));
+          if (city) setFormCity(city);
+          if (streetParts.length) setFormStreet(streetParts.join(', '));
+          if (addr.amenity || addr.building) setFormFlat(String(addr.amenity || addr.building));
+          triggerToast(city ? `GPS address detected in ${city} — please verify before saving.` : 'GPS position found — please verify the address before saving.');
+        } catch {
+          triggerToast('Location lookup failed. Please enter the address manually.');
+        } finally {
+          setIsLocating(false);
+        }
+      },
+      (err) => {
+        setIsLocating(false);
+        triggerToast(err.code === 1 ? 'Location permission denied — please type the address.' : 'Could not get GPS position — please type the address.');
+      },
+      { timeout: 10000, maximumAge: 60000 },
+    );
   };
 
   // Quick stats calculations
@@ -654,14 +641,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     .filter((b) => b.status === 'PAST' || b.status === 'COMPLETED')
     .reduce((acc, curr) => acc + curr.totalAmount, 0);
   const nexoraPoints = Math.floor(totalSpent / 10);
-
-  // Preset premium avatars to choose from
-  const PRESET_AVATARS = [
-    '/avatars/avatar-1.png',
-    '/avatars/avatar-2.png',
-    '/avatars/avatar-3.png',
-    '/avatars/avatar-4.png',
-  ];
 
   // Temporaries for form editing
   const [editFormName, setEditFormName] = useState(name);
@@ -687,24 +666,41 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     setIsEditOpen(true);
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+
+  // Photo upload goes straight to Supabase Storage (avatars bucket) and the
+  // shared profiles.photo_url — every device loads the same image (STEP 8).
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        triggerToast('Image is too large. Please select an image under 2MB.');
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const base64 = event.target?.result;
-        if (typeof base64 === 'string') {
-          setEditFormAvatar(base64);
-          triggerToast('Photo loaded successfully! Save Changes to apply.');
-        }
-      };
-      reader.readAsDataURL(file);
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      triggerToast('Please choose an image file (JPG, PNG or WebP).');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      triggerToast('Image is too large. Please select an image under 2MB.');
+      return;
+    }
+    if (!onUploadAvatar) {
+      triggerToast('Photo upload is unavailable right now.');
+      return;
+    }
+    setIsUploadingPhoto(true);
+    const ok = await onUploadAvatar(file);
+    setIsUploadingPhoto(false);
+    if (ok) {
+      setEditFormAvatar(avatarUrlWithVersion(profile ?? null));
+      triggerToast('Photo uploaded & synced to all your devices!');
+    } else {
+      triggerToast('Photo upload failed — please try again.');
     }
   };
+
+  // Keep the edit form's photo aligned with the shared profile row.
+  useEffect(() => {
+    if (isEditOpen) setEditFormAvatar(avatarUrlWithVersion(profile ?? null));
+  }, [profile?.photo_url, profile?.updated_at]);
 
   return (
     <div className="flex flex-col w-full max-w-md mx-auto gap-5 pb-40 pt-2 animate-in fade-in relative">
@@ -777,10 +773,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <div className="flex-1 min-w-0 py-1">
             <div className="flex items-center gap-1.5 flex-wrap">
               <h2 className="text-[18px] font-bold text-[#26181c] leading-tight truncate">{name}</h2>
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#fde7f3] text-[#e6007e] text-[10px] font-bold border border-[#fcd5e8]">
-                <span className="material-symbols-outlined text-[11px] fill-current">stars</span>
-                Gold Member
-              </span>
             </div>
             <p className="text-[13px] text-[#5a3f47] font-medium mt-1 flex items-center gap-1">
               <span className="material-symbols-outlined text-[14px] text-[#8c7077]">call</span>
@@ -806,7 +798,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               </div>
               <span className="material-symbols-outlined text-[14px] opacity-0 group-hover:opacity-100 transition-opacity">chevron_right</span>
             </div>
-            <p className="text-[13px] font-bold text-[#26181c]">Gold Passport</p>
+            <p className="text-[13px] font-bold text-[#26181c]">Membership Plans</p>
           </button>
 
           <button
@@ -831,10 +823,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         >
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-[18px] group-hover:rotate-12 transition-transform">ios_share</span>
-            <span>Share Profile & Referral Link</span>
+            <span>Share Nexora with Friends</span>
           </div>
           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/80 group-hover:bg-white/20 text-[#26181c] group-hover:text-white border border-[#fcd5e8]/50 group-hover:border-white/30">
-            {referralCode}
+            Share
           </span>
         </button>
       </div>
@@ -906,7 +898,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <MenuItem
               icon="share_reviews"
               label="Refer & Earn"
-              badge="₹150 Free"
               onClick={() => setIsReferEarnOpen(true)}
             />
             <MenuItem
@@ -1038,7 +1029,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       {/* Footer Branding & Legal */}
       <div className="flex flex-col items-center justify-center pt-6 pb-2 border-t border-[#e8e8e8]/50 text-center gap-1">
         <span className="text-[11px] font-extrabold uppercase tracking-widest text-[#e6007e]">Nexora PWA</span>
-        <span className="text-[11px] text-[#8c7077]">Version 1.4.2-stable</span>
+        <span className="text-[11px] text-[#8c7077]">Web app — updates apply automatically</span>
         <span className="text-[10px] text-[#8c7077]/80 mt-1">© 2026 Nexora. All rights reserved.</span>
       </div>
 
@@ -1051,12 +1042,18 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           {/* Profile Photo Section */}
           <div className="flex flex-col items-center justify-center py-4 bg-[#fcf9f8] rounded-2xl border border-[#e8e8e8] relative overflow-hidden">
             <div className="relative group">
-              <img
-                alt="Profile Photo"
-                className="w-24 h-24 rounded-full object-cover shadow-[0_8px_32px_rgba(185,0,100,0.15)] ring-4 ring-white"
-                src={editFormAvatar}
-              />
-              <button 
+              {editFormAvatar ? (
+                <img
+                  alt="Profile Photo"
+                  className="w-24 h-24 rounded-full object-cover shadow-[0_8px_32px_rgba(185,0,100,0.15)] ring-4 ring-white"
+                  src={editFormAvatar}
+                />
+              ) : (
+                <div className="w-24 h-24 rounded-full bg-[#fde7f3] flex items-center justify-center ring-4 ring-white shadow-[0_8px_32px_rgba(185,0,100,0.15)]">
+                  <span className="material-symbols-outlined text-[40px] text-[#e6007e]">person</span>
+                </div>
+              )}
+              <button
                 type="button"
                 className="absolute bottom-0 right-0 w-8 h-8 bg-[#b90064] text-white rounded-full flex items-center justify-center shadow-md transform hover:scale-105 transition-transform cursor-pointer"
                 onClick={() => {
@@ -1066,59 +1063,42 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <span className="material-symbols-outlined text-[18px]">photo_camera</span>
               </button>
             </div>
-            
+
             <div className="flex flex-col items-center gap-1.5 mt-3 w-full px-4">
-              <span className="text-[10px] uppercase font-bold text-[#8c7077] tracking-wider">Select Premium Avatar</span>
-              <div className="flex gap-3 justify-center">
-                {PRESET_AVATARS.map((p, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => setEditFormAvatar(p)}
-                    className={`w-12 h-12 rounded-full overflow-hidden border-2 relative transition-all ${
-                      editFormAvatar === p ? 'border-[#e6007e] scale-110 shadow-sm' : 'border-slate-200 opacity-60'
-                    }`}
-                  >
-                    <img src={p} alt="Preset avatar" className="w-full h-full object-cover" />
-                    {editFormAvatar === p && (
-                      <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-                        <span className="material-symbols-outlined text-white text-[14px] font-bold">check</span>
-                      </div>
-                    )}
-                  </button>
-                ))}
-              </div>
-              
               <div className="flex gap-3 mt-1.5">
                 <button
                   type="button"
+                  disabled={isUploadingPhoto}
                   onClick={() => {
                     document.getElementById('avatar-upload-file-input')?.click();
                   }}
-                  className="text-[11px] text-white font-semibold px-4 py-1.5 bg-[#b90064] hover:bg-[#8e004b] rounded-full transition-colors flex items-center gap-1 shadow-xs cursor-pointer"
+                  className="text-[11px] text-white font-semibold px-4 py-1.5 bg-[#b90064] hover:bg-[#8e004b] rounded-full transition-colors flex items-center gap-1 shadow-xs cursor-pointer disabled:opacity-60"
                 >
-                  <span className="material-symbols-outlined text-[13px]">upload</span>
-                  Upload Photo
+                  <span className="material-symbols-outlined text-[13px]">{isUploadingPhoto ? 'progress_activity' : 'upload'}</span>
+                  {isUploadingPhoto ? 'Uploading…' : 'Upload Photo'}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setEditFormAvatar('/avatars/avatar-1.png')}
-                  className="text-[11px] text-[#594047] font-semibold px-3 py-1.5 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
-                >
-                  Remove
-                </button>
+                {editFormAvatar ? (
+                  <button
+                    type="button"
+                    onClick={() => setEditFormAvatar('')}
+                    className="text-[11px] text-[#594047] font-semibold px-3 py-1.5 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+                  >
+                    Remove
+                  </button>
+                ) : null}
               </div>
+              <span className="text-[10px] text-[#8c7077] mt-1 text-center">Stored securely in your Nexora account — visible on every device.</span>
             </div>
           </div>
 
           {/* Form Fields Container */}
           <div className="flex flex-col gap-4 max-h-[50vh] overflow-y-auto pr-1 no-scrollbar">
-            
+
             {/* Basic Info Card */}
             <div className="bg-[#fff8f8] rounded-2xl p-4 border border-[#e0bec6]/40 flex flex-col gap-4 relative overflow-hidden w-full">
               <div className="absolute -top-10 -right-10 w-32 h-32 bg-gradient-to-br from-[#ffd9e2] to-transparent opacity-20 rounded-full blur-2xl pointer-events-none"></div>
-              
-              {/* Full Name */}
+
+          {/* Full Name */}
               <div className="flex flex-col gap-1.5 w-full">
                 <label className="text-[12px] font-bold text-[#594047] ml-1 block w-full" htmlFor="fullName">Full Name</label>
                 <div className="relative flex items-center w-full">
@@ -1136,7 +1116,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     className={`w-full h-12 bg-white text-[14px] font-medium text-[#26181c] rounded-xl pl-11 pr-4 py-2.5 border focus:outline-none focus:ring-2 focus:ring-[#b90064] transition-all box-border ${
                       nameError ? 'border-red-500 ring-2 ring-red-100' : 'border-[#e8e8e8]'
                     }`}
-                    placeholder="e.g. Vijay K. Sharma"
+                    placeholder="e.g. Rahul Sharma"
                   />
                 </div>
                 {nameError && (
@@ -1367,53 +1347,35 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         </div>
       </Modal>
 
-      {/* Modal 2: Refer & Earn */}
+      {/* Modal 2: Refer & Earn — program NOT launched; fully honest content */}
       <Modal isOpen={isReferEarnOpen} onClose={() => setIsReferEarnOpen(false)} title="Refer & Earn">
         <div className="flex flex-col items-center text-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-[#fde7f3] flex items-center justify-center text-[#e6007e] animate-bounce">
+          <div className="w-16 h-16 rounded-full bg-[#fde7f3] flex items-center justify-center text-[#e6007e]">
             <span className="material-symbols-outlined text-[32px]">redeem</span>
           </div>
           <div>
-            <h4 className="text-[16px] font-bold text-[#26181c]">Get ₹150 for every friend!</h4>
+            <h4 className="text-[16px] font-bold text-[#26181c]">Referral rewards are coming soon</h4>
             <p className="text-xs text-[#5a3f47] mt-1 px-4 leading-relaxed">
-              Share your referral code. When they register and complete their first verified booking, you both get <strong className="text-[#e6007e]">₹150 credits</strong> in your Reward cash wallet!
+              Nexora ka referral program abhi launch nahi hua hai. Jab live hoga, exact reward
+              aur rules yahin dikhenge — bina kisi hidden condition ke. Tab tak aap app link
+              share kar sakte hain:
             </p>
           </div>
 
           <div className="w-full bg-[#fff8f8] border border-dashed border-[#fcd5e8] p-4 rounded-xl flex items-center justify-between gap-3 mt-1">
-            <div className="text-left">
-              <span className="text-[10px] uppercase font-bold text-[#8c7077]">Your Referral Code</span>
-              <p className="text-[18px] font-extrabold text-[#e6007e] tracking-wider uppercase">{name.toUpperCase().replace(/\s+/g, '')}150</p>
+            <div className="text-left min-w-0 flex-1">
+              <span className="text-[10px] uppercase font-bold text-[#8c7077]">App Link</span>
+              <p className="text-[13px] font-bold text-[#e6007e] truncate">{profileDeepLink}</p>
             </div>
             <button
               onClick={() => {
-                navigator.clipboard?.writeText(`${name.toUpperCase().replace(/\s+/g, '')}150`);
-                triggerToast('Referral code copied to clipboard!');
+                navigator.clipboard?.writeText(profileDeepLink);
+                triggerToast('App link copied to clipboard!');
               }}
-              className="px-4 py-2 bg-[#e6007e] text-white text-xs font-bold rounded-lg hover:bg-[#b90064] active:scale-95 transition-all"
+              className="px-4 py-2 bg-[#e6007e] text-white text-xs font-bold rounded-lg hover:bg-[#b90064] active:scale-95 transition-all shrink-0"
             >
-              Copy Code
+              Copy Link
             </button>
-          </div>
-
-          <div className="w-full text-left mt-2">
-            <h5 className="text-[11px] uppercase font-bold text-[#8c7077] mb-2">Referrals Tracker</h5>
-            <div className="flex flex-col gap-2">
-              <div className="flex justify-between items-center text-xs p-2.5 bg-slate-50 rounded-lg border border-slate-100">
-                <span className="font-semibold text-[#26181c]">Ananya Kashyap</span>
-                <span className="text-emerald-600 font-bold flex items-center gap-0.5">
-                  <span className="material-symbols-outlined text-[12px] fill-current">check_circle</span>
-                  ₹150 Credited
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-xs p-2.5 bg-slate-50 rounded-lg border border-slate-100">
-                <span className="font-semibold text-[#26181c]">Vikram Sen</span>
-                <span className="text-amber-600 font-bold flex items-center gap-0.5">
-                  <span className="material-symbols-outlined text-[12px] fill-current">hourglass_empty</span>
-                  Pending Booking
-                </span>
-              </div>
-            </div>
           </div>
         </div>
       </Modal>
@@ -1433,7 +1395,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <span className="text-[11px] font-extrabold uppercase tracking-widest text-[#ffb0c8]">Nexora Beauty Passport</span>
               </div>
               <span className="px-2.5 py-0.5 rounded-full bg-[#e6007e]/20 text-[#ffb0c8] text-[10px] font-extrabold border border-[#e6007e]/40">
-                ★ Gold Member
+                Nexora Customer
               </span>
             </div>
 
@@ -1450,24 +1412,22 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   {preferredArea}, {preferredCity.toUpperCase()}
                 </p>
                 <p className="text-[10px] text-white/70 mt-0.5">
-                  {nexoraPoints.toLocaleString()} Rewards Points Earning
+                  {bookings.length} booking{bookings.length === 1 ? '' : 's'} on Nexora
                 </p>
               </div>
             </div>
 
             <div className="bg-white/10 backdrop-blur-md rounded-xl p-3 border border-white/10 flex items-center justify-between gap-2">
               <div className="text-left">
-                <span className="text-[9px] uppercase font-extrabold text-[#ffb0c8] tracking-wider block">Exclusive Referral Offer</span>
-                <span className="text-[13px] font-bold text-white">₹150 Off First Booking</span>
+                <span className="text-[9px] uppercase font-extrabold text-[#ffb0c8] tracking-wider block">Book with confidence</span>
+                <span className="text-[13px] font-bold text-white">Verified salons · secure 25% advance</span>
               </div>
-              <span className="px-2.5 py-1 rounded-lg bg-[#e6007e] text-white text-[12px] font-black tracking-wider uppercase shadow-xs">
-                {referralCode}
-              </span>
+              <span className="material-symbols-outlined text-[24px] text-[#e6007e]">verified</span>
             </div>
           </div>
 
           <p className="text-xs text-[#5a3f47] leading-relaxed px-2">
-            Share your Nexora Beauty Passport & Gold Member status. Friends get <strong className="text-[#e6007e]">₹150 off</strong> on their first appointment when using your link!
+            Share your Nexora Beauty Passport — live salons, real bookings, backed by your Nexora account on every device.
           </p>
 
           {/* Deep Link Input Field */}
@@ -1517,7 +1477,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
             <button
               onClick={() => {
-                const text = encodeURIComponent(`Check out my Nexora Beauty Passport! Use my referral code "${referralCode}" for ₹150 off your first salon appointment: ${profileDeepLink}`);
+                const text = encodeURIComponent(`Check out Nexora — verified salons with secure advance booking: ${profileDeepLink}`);
                 window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
               }}
               className="py-3 px-4 bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
@@ -1560,46 +1520,27 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         </div>
       </Modal>
 
-      {/* Modal 3: Membership Tier Info */}
-      <Modal isOpen={isMembershipOpen} onClose={() => setIsMembershipOpen(false)} title="Gold Passport Membership">
-        <div className="flex flex-col gap-4">
-          <div className="bg-gradient-to-r from-[#8e004b] to-[#b90064] p-5 rounded-2xl text-white relative overflow-hidden shadow-lg">
-            <span className="absolute top-2 right-2 material-symbols-outlined text-[64px] text-white/10 select-none">stars</span>
-            <span className="px-2.5 py-0.5 text-[9px] font-extrabold uppercase rounded-full bg-white/20 border border-white/30 tracking-widest">Active Tier</span>
-            <h4 className="text-[20px] font-black mt-1">NEXORA GOLD</h4>
-            <p className="text-xs text-rose-100 mt-1">Enjoy curated perks at 250+ top-rated salons across India.</p>
+      {/* Modal 3: Membership — plans NOT launched; fully honest content */}
+      <Modal isOpen={isMembershipOpen} onClose={() => setIsMembershipOpen(false)} title="Nexora Membership">
+        <div className="flex flex-col items-center text-center gap-4 p-2">
+          <div className="w-16 h-16 rounded-full bg-[#fde7f3] flex items-center justify-center text-[#e6007e]">
+            <span className="material-symbols-outlined text-[32px]">workspace_premium</span>
           </div>
-
           <div>
-            <h5 className="text-[11px] font-bold text-[#8c7077] uppercase tracking-wider mb-2.5">Your Member Benefits</h5>
-            <div className="flex flex-col gap-2">
-              {[
-                { icon: 'trending_up', title: '1.5x Rewards Multiplier', desc: 'Earn 15 points per ₹100 instead of 10 points.' },
-                { icon: 'star', title: 'Free Hair Spa Add-on', desc: 'Complimentary herbal spa with haircuts above ₹1200.' },
-                { icon: 'speed', title: 'Priority Booking Support', desc: 'Instant confirmations on high-demand holiday slots.' },
-                { icon: 'person_celebrate', title: 'Birthday Pamper Voucher', desc: 'Flat ₹500 off on any service during your birthday week.' },
-              ].map((b, i) => (
-                <div key={i} className="flex gap-3 items-start p-2.5 rounded-xl border border-rose-50 hover:bg-rose-50/40 transition-colors">
-                  <span className="material-symbols-outlined text-[#e6007e] text-[18px] mt-0.5">{b.icon}</span>
-                  <div>
-                    <h6 className="text-[13px] font-bold text-[#26181c]">{b.title}</h6>
-                    <p className="text-[11px] text-[#5a3f47] leading-tight mt-0.5">{b.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <h4 className="text-[16px] font-bold text-[#26181c]">Membership plans are coming soon</h4>
+            <p className="text-xs text-[#5a3f47] mt-2 leading-relaxed">
+              Nexora abhi koi paid membership offer nahi karta. Jab plans launch honge,
+              unke exact benefits aur price yahin list honge — aap tabhi pay karenge jab
+              aapko plan pasand ho. Aapke bookings aur points already aapke account me
+              real-time track hote hain.
+            </p>
           </div>
-
-          <div className="pt-3 border-t border-[#e8e8e8]/80">
-            <div className="flex justify-between text-xs font-bold text-[#26181c] mb-1">
-              <span>Next level: Platinum Tier</span>
-              <span className="text-[#e6007e]">3 Visits Left</span>
-            </div>
-            <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-              <div className="bg-[#e6007e] h-full rounded-full" style={{ width: '70%' }} />
-            </div>
-            <p className="text-[10px] text-[#8c7077] mt-1 text-right">7 out of 10 milestone bookings completed this season.</p>
-          </div>
+          <button
+            onClick={() => setIsMembershipOpen(false)}
+            className="w-full h-11 bg-[#b90064] text-white font-bold rounded-xl hover:bg-[#8e004b] transition-colors cursor-pointer"
+          >
+            Got it
+          </button>
         </div>
       </Modal>
       <Modal isOpen={isFeedbackOpen} onClose={() => setIsFeedbackOpen(false)} title="App Feedback">
@@ -1635,7 +1576,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       </Modal>
 
       {/* Modal 4: Support & Live Chat */}
-      <Modal isOpen={isSupportOpen} onClose={() => setIsSupportOpen(false)} title="Nexora Premium Concierge">
+      <Modal isOpen={isSupportOpen} onClose={() => setIsSupportOpen(false)} title="Nexora Assistant (Automated)">
         <div className="flex flex-col h-[400px]">
           {/* Chat Bubble Area */}
           <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2">
@@ -1726,11 +1667,11 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       <Modal isOpen={isFaqOpen} onClose={() => setIsFaqOpen(false)} title="Frequently Asked Questions">
         <div className="flex flex-col gap-3.5">
           {[
-            { q: 'How do I cancel my booking?', a: 'You can cancel free of charge up to 2 hours before your scheduled time slot from the Bookings tab.' },
-            { q: 'Can I pay with UPI at the salon?', a: 'Yes, Nexora supports UPI, Credit/Debit cards, and Cash on Delivery at all verified salons.' },
-            { q: 'Are the prices inclusive of tax?', a: 'Yes, all starting prices and final booking estimates are fully inclusive of taxes with zero hidden fees.' },
-            { q: 'How do I earn Nexora rewards?', a: 'You earn 10 points for every ₹100 spent. Points can be redeemed for free add-on services or flat booking discounts.' },
-            { q: 'Is there a booking charge or convenience fee?', a: 'Nexora is proud to charge ₹0 convenience fees. You only pay for the salon services you select!' },
+            { q: 'How do I cancel my booking?', a: 'Manage bookings from the Bookings tab. Same-day customer cancellation and no-show are not refundable; a salon cancellation qualifies your advance for a full refund via the verified payment flow.' },
+            { q: 'How do I pay for a booking?', a: 'The checkout shows the exact total and the 25% advance collected online via Razorpay (UPI/cards supported). The advance is always calculated on the server before you pay.' },
+            { q: 'When will my refund process?', a: 'Approved refunds are recorded against your original payment and stay pending until the payment provider confirms processing.' },
+            { q: 'How do I earn Nexora rewards?', a: 'The points ledger has not launched yet. Your Rewards tab already shows live counts from your real booking history — points activate with the rewards launch.' },
+            { q: 'Where is my profile data stored?', a: 'In your Nexora account (Supabase). Profile, photo, favourites, addresses and settings sync automatically across every device where you log in.' },
           ].map((faq, i) => (
             <details key={i} className="group p-3 rounded-xl border border-slate-100 bg-slate-50 [&_summary::-webkit-details-marker]:hidden">
               <summary className="flex items-center justify-between cursor-pointer focus:outline-none select-none">
@@ -1880,7 +1821,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <img
             alt="Nexora Brand Logo"
             className="h-14 w-auto object-contain"
-            src="https://lh3.googleusercontent.com/aida-public/AB6AXuAdwqVBUEuosIJ_cJgc9No6Q6mJJLfi_-vzNmbu-Hlvo8EoZ3aeEc5AsBZpCd7EDzA_nWsgue2XIPsg4VqQPI3v4JSAfXDGo-Wa3QUE0znR5W3lSau81IHjKHVMMszkTHm37WqAZZG5pVselF7MwAPFfSXkL596P_Hn9_MEk0bCJbxsvUhCMRkvJxXUA7UiNZdVjcCaWMFFj0saocYM8idqSL0Yj_5kq5HUA3RbAtVK0TDLj0BzPKS8ya9q6-ySo8S_IjLw2z3S6vE"
+            src="/icons/icon-192.png"
           />
           <div>
             <h4 className="text-[16px] font-bold text-[#26181c]">Nexora Client PWA</h4>
@@ -1888,13 +1829,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </div>
 
           <p className="text-xs text-[#5a3f47] px-2 leading-relaxed">
-            Nexora is India's leading digital grooming companion, connecting you directly with the absolute finest local beauty clinics, expert barbers, and luxury styling studios. Save favorites, earn premium gift card cash, and lock in bookings on demand.
+            Nexora connects you with local beauty salons, expert barbers, and styling studios in Jaipur. Save favorites, manage bookings, and keep your profile synced securely across every device you sign in on.
           </p>
 
           <div className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 text-[11px] text-[#5a3f47] text-left flex flex-col gap-1 mt-2">
-            <p><strong>Release:</strong> 2026.07.25_PWA-v1.4.2</p>
+            <p><strong>Release:</strong> July 2026 (unified account sync build)</p>
             <p><strong>PWA Engine:</strong> Enabled (Offline-First Ready)</p>
-            <p><strong>Environment:</strong> Production Cloud Run Sandbox</p>
+            <p><strong>Environment:</strong> Production (Vercel)</p>
             <p><strong>Client:</strong> {email}</p>
           </div>
         </div>
@@ -1942,8 +1883,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <button
               key={i}
               onClick={() => {
-                setSelectedLanguage(l.name);
-                localStorage.setItem('profile_language', l.name);
+                applySettings({ ...settings, language: l.code === 'hi' ? 'hindi' : 'english' });
                 setIsLanguageOpen(false);
                 triggerToast(`App language updated to ${l.name}!`);
               }}
@@ -2010,8 +1950,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 type="checkbox"
                 checked={remindersEnabled}
                 onChange={(e) => {
-                  setRemindersEnabled(e.target.checked);
-                  localStorage.setItem('reminders_enabled', String(e.target.checked));
+                  applySettings({ ...settings, appointment_reminders: e.target.checked });
                   triggerToast(e.target.checked ? 'Reminders turned ON' : 'Reminders turned OFF');
                 }}
                 className="w-5 h-5 accent-[#e6007e] rounded cursor-pointer"
@@ -2030,8 +1969,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 type="checkbox"
                 checked={autoPlayAmbiance}
                 onChange={(e) => {
-                  setAutoPlayAmbiance(e.target.checked);
-                  localStorage.setItem('autoplay_ambiance', String(e.target.checked));
+                  applySettings({ ...settings, autoplay_ambiance: e.target.checked });
                   triggerToast(e.target.checked ? 'Auto-play turned ON' : 'Auto-play turned OFF');
                 }}
                 className="w-5 h-5 accent-[#e6007e] rounded cursor-pointer"
@@ -2040,12 +1978,11 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </div>
 
           <div className="flex flex-col gap-1">
-            <h5 className="text-[11px] font-bold text-[#8c7077] uppercase tracking-wider mb-1">Theme (PWA Local)</h5>
+            <h5 className="text-[11px] font-bold text-[#8c7077] uppercase tracking-wider mb-1">Theme</h5>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => {
-                  setThemeMode('light');
-                  localStorage.setItem('profile_theme', 'light');
+                  applySettings({ ...settings, display_mode: 'light' });
                   triggerToast('Light theme applied.');
                 }}
                 className={`h-11 rounded-xl font-bold text-xs flex items-center justify-center gap-1 border transition-all cursor-pointer ${
@@ -2059,9 +1996,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               </button>
               <button
                 onClick={() => {
-                  setThemeMode('dark');
-                  localStorage.setItem('profile_theme', 'dark');
-                  triggerToast('Dark theme mock configuration activated.');
+                  applySettings({ ...settings, display_mode: 'dark' });
+                  triggerToast('Dark theme applied & synced.');
                 }}
                 className={`h-11 rounded-xl font-bold text-xs flex items-center justify-center gap-1 border transition-all cursor-pointer ${
                   themeMode === 'dark'
@@ -2243,12 +2179,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <div 
               className="w-full h-44 rounded-2xl overflow-hidden relative shadow-sm border border-[#e8e8e8]"
               style={{
-                backgroundImage: "url('https://lh3.googleusercontent.com/aida-public/AB6AXuAA5SFkus6dDWmYvvjZrAYDHZOLX_IOHXETYBvKeJE27MH1A1cVuC1GYhOxkSoSX6b428DYbxVJwHKNzCXl1ZezM5bMXFDs1JC2r0Xc8PfjsuqHcuJF9xr36Q9mlGnMJZlE8sKYYtgCyE8uoEF53Zhx_lfHseqn0nB216Eby4dRk3NwS42VhDnwsPktz0zI3S54nRJEI93G8paIQNi5_bJQtaBH0J5sey3NeTrKGFrGyjPrt96R53b1yM8g915VBSZKe00wc9imMyM')",
+                backgroundImage: 'linear-gradient(135deg, #fde7f3 0%, #fcf9f8 55%, #f3d4e0 100%)',
                 backgroundSize: 'cover',
                 backgroundPosition: 'center'
               }}
             >
-              <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent pointer-events-none"></div>
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span className="material-symbols-outlined text-[72px] text-[#b90064]/15">location_on</span>
+              </div>
               <div className="absolute inset-0 flex items-end justify-center pb-3">
                 <button
                   type="button"
@@ -2306,7 +2244,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   type="text"
                   value={formFlat}
                   onChange={(e) => setFormFlat(e.target.value)}
-                  placeholder="e.g. Apt 4B"
+                  placeholder="e.g. Flat 201, Pearl Residency"
                   className="w-full h-11 bg-[#fcf9f8] text-[13px] text-[#26181c] rounded-xl px-4 border border-[#e8e8e8] focus:outline-none focus:ring-2 focus:ring-[#b90064] transition-all font-medium"
                 />
               </div>
@@ -2319,7 +2257,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   type="text"
                   value={formStreet}
                   onChange={(e) => setFormStreet(e.target.value)}
-                  placeholder="e.g. Oxford Street"
+                  placeholder="e.g. Jhotwara Road"
                   className="w-full h-11 bg-[#fcf9f8] text-[13px] text-[#26181c] rounded-xl px-4 border border-[#e8e8e8] focus:outline-none focus:ring-2 focus:ring-[#b90064] transition-all font-medium"
                 />
               </div>
@@ -2348,7 +2286,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     type="text"
                     value={formCity}
                     onChange={(e) => setFormCity(e.target.value)}
-                    placeholder="Mumbai"
+                    placeholder="Jaipur"
                     className="w-full h-11 bg-[#fcf9f8] text-[13px] text-[#26181c] rounded-xl px-4 border border-[#e8e8e8] focus:outline-none focus:ring-2 focus:ring-[#b90064] transition-all font-medium"
                   />
                 </div>
@@ -2359,7 +2297,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     type="text"
                     value={formPincode}
                     onChange={(e) => setFormPincode(e.target.value)}
-                    placeholder="400050"
+                    placeholder="302001"
                     className="w-full h-11 bg-[#fcf9f8] text-[13px] text-[#26181c] rounded-xl px-4 border border-[#e8e8e8] focus:outline-none focus:ring-2 focus:ring-[#b90064] transition-all font-medium"
                   />
                 </div>

@@ -3,6 +3,7 @@ import { Booking, LoyaltyTier } from '../types';
 
 interface RewardsScreenProps {
   bookings?: Booking[];
+  customerName?: string;
 }
 
 export const TIERS: LoyaltyTier[] = [
@@ -99,7 +100,7 @@ interface LeaderboardMember {
   isUser?: boolean;
 }
 
-export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) => {
+export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [], customerName = '' }) => {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
@@ -119,7 +120,7 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
 
   // Referral State
   const [userReferralCode] = useState(() => {
-    const raw = (localStorage.getItem('profile_name') || 'GUEST').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 8) || 'GUEST';
+    const raw = (customerName || 'GUEST').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 8) || 'GUEST';
     let hash = 0;
     for (const ch of raw) hash = (hash * 31 + ch.charCodeAt(0)) % 9000;
     return `GLOW-${raw}-${String(1000 + hash)}`;
@@ -182,7 +183,7 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
   // Current Logged-in User Profile in Leaderboard
   const currentUserMember: LeaderboardMember = {
     id: 'priya-current-user',
-    name: `${localStorage.getItem('profile_name') || 'Customer'} (You)`,
+    name: `${customerName || 'Customer'} (You)`,
     pointsAllTime: calculatedPoints,
     pointsMonthly: Math.floor(calculatedPoints * 0.7),
     pointsWeekly: Math.floor(calculatedPoints * 0.4),

@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Screen } from '../types';
+import { supabase } from '../lib/supabaseClient';
+import { loadSupportTickets, createSupportTicket, subscribeToSupportTickets } from '../lib/supportRepository';
 
 interface SupportScreenProps {
   onBack: () => void;
   onNavigate: (screen: any) => void;
+  customerId?: string;
 }
 
 interface TicketMessage {
@@ -24,6 +27,7 @@ interface SupportTicket {
 export const SupportScreen: React.FC<SupportScreenProps> = ({
   onBack,
   onNavigate,
+  customerId,
 }) => {
   const [activeTab, setActiveTab] = useState<'help-home' | 'my-tickets' | 'create-ticket'>('help-home');
   const [searchQuery, setSearchQuery] = useState('');
@@ -39,26 +43,47 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({
   // Ticket detail reply input state
   const [replyText, setReplyText] = useState('');
 
-  // Loaded/saved tickets
-  const [tickets, setTickets] = useState<SupportTicket[]>(() => {
-    const saved = localStorage.getItem('nexora_support_tickets');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return [];
-  });
+  // Tickets sync with the support_tickets table (single source of truth).
+  const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [ticketsLoading, setTicketsLoading] = useState(false);
 
   // Track expanded FAQ items
   const [expandedFaqIndex, setExpandedFaqIndex] = useState<number | null>(null);
 
-  // Sync tickets to localStorage
+  const refreshTickets = React.useCallback(async () => {
+    if (!supabase || !customerId) return;
+    setTicketsLoading(true);
+    try {
+      const rows = await loadSupportTickets(supabase, customerId);
+      setTickets(
+        rows.map((row) => ({
+          id: row.id,
+          subject: row.subject,
+          category: row.category,
+          status: row.status.toLowerCase().includes('resolv') ? 'RESOLVED' : 'OPEN',
+          date: row.createdAt
+            ? new Date(row.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+            : '',
+          messages: row.description
+            ? [{ sender: 'user' as const, text: row.description, time: '' }]
+            : [],
+        })),
+      );
+    } catch (e: any) {
+      console.warn('Support tickets load notice:', e?.message || e);
+    } finally {
+      setTicketsLoading(false);
+    }
+  }, [customerId]);
+
   useEffect(() => {
-    localStorage.setItem('nexora_support_tickets', JSON.stringify(tickets));
-  }, [tickets]);
+    void refreshTickets();
+    if (!supabase || !customerId) return;
+    const unsubscribe = subscribeToSupportTickets(supabase, customerId, () => {
+      void refreshTickets();
+    });
+    return unsubscribe;
+  }, [refreshTickets]);
 
   const triggerToast = (msg: string) => {
     setToast(msg);
@@ -69,32 +94,32 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({
     {
       category: 'Booking',
       q: 'How do I cancel a booking?',
-      a: 'You can cancel your booking up to 2 hours before your appointment without any penalty. Go to your Profile, select "My Bookings", select the upcoming session, and tap "Cancel Appointment".',
+      a: 'Manage your bookings from the Bookings tab. Same-day customer cancellation and no-show are not refundable. A salon or owner cancellation qualifies your advance for a full refund through the verified payment flow. A booking cannot be cancelled after the service starts — open a support ticket instead.',
     },
     {
       category: 'Payment',
       q: 'When will my refund process?',
-      a: 'Refunds typically take 3-5 business days to appear on your credit card or UPI account statement, depending entirely on your bank\'s processing cycles.',
+      a: 'Refund eligibility is decided by verified booking and payment records, never by the app alone. Approved refunds are recorded against your original payment and remain pending until the payment provider confirms processing.',
     },
     {
       category: 'Rewards',
       q: 'How do loyalty points work?',
-      a: 'Earn 10 points for every ₹100 spent. 1,000 points equals a ₹100 discount on your next visit. Points expire after 12 months of inactivity.',
+      a: 'The Nexora points ledger has not launched yet. Your Rewards tab already shows live counts from your real booking history — points and tiers will activate with the rewards launch.',
     },
     {
       category: 'Referral',
       q: 'How do I refer a friend?',
-      a: 'Tap "Refer & Earn" in your Profile to share your unique referral code. Your friend gets ₹100 off on their first order, and you receive ₹150 once they complete their booking.',
+      a: 'A referral rewards program has not launched on Nexora yet. You can always share the app link from your Profile — any referral benefits will be announced inside the app when they go live.',
     },
     {
       category: 'Member',
-      q: 'What are Gold membership perks?',
-      a: 'Gold members enjoy a 1.5x rewards multiplier, free herbal spa add-on with haircuts above ₹1200, and priority scheduling on high-demand holiday slots.',
+      q: 'What are membership perks?',
+      a: 'Paid membership plans have not launched yet. When they do, the exact benefits and price will be listed inside the app before you pay for anything.',
     },
     {
       category: 'Salon',
-      q: 'Is there a booking charge or convenience fee?',
-      a: 'No! Nexora charges ₹0 convenience fees. You only pay for the salon services you select. We guarantee 100% price transparency.',
+      q: 'How much does booking cost?',
+      a: 'The checkout shows the exact service total and the 25% advance collected online. The advance amount is always calculated and confirmed on the server before you pay.',
     },
     {
       category: 'Tech',
@@ -104,7 +129,7 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({
     {
       category: 'Other',
       q: 'Can I choose my favorite stylist?',
-      a: 'Absolutely! When booking on the Salon Detail screen, scroll to "Select Stylist" and tap the photo of your preferred professional.',
+      a: 'When a salon lists its team, the Salon Detail screen shows a stylist selector so you can pick a preferred professional before checkout.',
     },
   ];
 
@@ -118,100 +143,63 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({
     return matchesSearch && matchesCategory;
   });
 
-  const handleCreateTicket = (e: React.FormEvent) => {
+  const handleCreateTicket = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSubject.trim() || !newDescription.trim()) {
       triggerToast('Please fill in all ticket details.');
       return;
     }
+    if (!supabase || !customerId) {
+      triggerToast('Support tickets need a signed-in account. Please log in again.');
+      return;
+    }
 
-    const newTicket: SupportTicket = {
-      id: `NX-TK-${Math.floor(100 + Math.random() * 900)}`,
-      subject: newSubject,
-      category: newCategory,
-      status: 'OPEN',
-      date: 'Just now',
-      messages: [
-        {
-          sender: 'user',
-          text: newDescription,
-          time: 'Just now',
-        },
-        {
-          sender: 'executive',
-          text: `This is an automated acknowledgement from Nexora Assistant. Your ticket "${newSubject}" has been saved under category "${newCategory}". Replies from our team will appear in this chat.`,
-          time: 'Just now',
-        },
-      ],
-    };
+    try {
+      const created = await createSupportTicket(supabase, customerId, {
+        subject: newSubject,
+        category: newCategory,
+        description: newDescription,
+      });
+      const newTicket: SupportTicket = {
+        id: created.id,
+        subject: created.subject,
+        category: created.category,
+        status: created.status.toLowerCase().includes('resolv') ? 'RESOLVED' : 'OPEN',
+        date: 'Just now',
+        messages: [
+          {
+            sender: 'user',
+            text: newDescription.trim(),
+            time: 'Just now',
+          },
+          {
+            sender: 'executive',
+            text: `Nexora Assistant (automated): your ticket "${created.subject}" has been saved with status OPEN. Its live status will always show in My Tickets.`,
+            time: 'Just now',
+          },
+        ],
+      };
 
-    setTickets((prev) => [newTicket, ...prev]);
-    setNewSubject('');
-    setNewDescription('');
-    triggerToast('Support Ticket Created!');
-    setActiveTab('my-tickets');
+      setTickets((prev) => [newTicket, ...prev.filter((t) => t.id !== newTicket.id)]);
+      setNewSubject('');
+      setNewDescription('');
+      triggerToast('Support ticket saved to your account.');
+      setActiveTab('my-tickets');
+    } catch (err: any) {
+      console.warn('Ticket create notice:', err?.message || err);
+      triggerToast('Could not save the ticket right now — please try again.');
+    }
   };
 
+  // Ticket thread replies are not wired to the backend yet — the submit stays
+  // honest instead of pretending a message was delivered.
   const handleSendReply = () => {
     if (!replyText.trim() || !selectedTicket) return;
-
-    const updatedMessage: TicketMessage = {
-      sender: 'user',
-      text: replyText,
-      time: 'Just now',
-    };
-
-    const updatedTickets = tickets.map((t) => {
-      if (t.id === selectedTicket.id) {
-        return {
-          ...t,
-          messages: [...t.messages, updatedMessage],
-        };
-      }
-      return t;
-    });
-
-    setTickets(updatedTickets);
     setReplyText('');
-
-    // Update selected ticket in view
-    setSelectedTicket((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        messages: [...prev.messages, updatedMessage],
-      };
-    });
-
-    // Automated acknowledgement (labelled as such — no human-agent claims)
-    setTimeout(() => {
-      const systemReply: TicketMessage = {
-        sender: 'executive',
-        text: "Nexora Assistant (automated): your reply has been added to the ticket.",
-        time: 'Just now',
-      };
-
-      setTickets((prevTickets) =>
-        prevTickets.map((t) => {
-          if (t.id === selectedTicket.id) {
-            return {
-              ...t,
-              messages: [...t.messages, systemReply],
-            };
-          }
-          return t;
-        })
-      );
-
-      setSelectedTicket((prev) => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          messages: [...prev.messages, systemReply],
-        };
-      });
-    }, 1500);
+    triggerToast('Ticket replies are not available yet — the team uses your ticket description.');
   };
+
+
 
   const getCategoryIcon = (cat: string) => {
     switch (cat.toLowerCase()) {

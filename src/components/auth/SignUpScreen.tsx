@@ -15,6 +15,7 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [signedIn, setSignedIn] = useState(false);
 
   const validatePassword = (password: string) => {
     const minLength = 8;
@@ -57,6 +58,7 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
     try {
       if (!supabase) {
         alert('Authentication is unavailable because the app is not configured.');
+        setIsLoading(false);
         return;
       }
       const { data, error } = await supabase.auth.signUp({
@@ -73,28 +75,31 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
 
       if (error) {
         alert('Sign up note: ' + (error.message || 'Please try again.'));
-      } else {
-        if (data.user) {
-          try {
-            // Create or update the matching profile under the locked role
-            // contract: one email = one permanent role ('customer' here).
-            await supabase.from('profiles').upsert(
-              {
-                id: data.user.id,
-                full_name: formData.fullName,
-                email: formData.email,
-                mobile: formData.mobile,
-                platform_role: 'customer',
-                is_active: true,
-              },
-              { onConflict: 'id' }
-            );
-          } catch (pe) {
-            // Best effort only: the backend signup_role trigger is the
-            // authoritative profile creator when RLS blocks a pre-session upsert.
-          }
+      } else if (data.session && data.user) {
+        // AUTO LOGIN (task STEP 3): Supabase returned a live session because
+        // email confirmation is disabled. The DB trigger handle_new_user has
+        // already created the single profiles row (platform_role='customer',
+        // is_active=true, ON CONFLICT DO NOTHING — never a duplicate).
+        // Best-effort: backfill name/phone on the row the trigger created.
+        try {
+          await supabase
+            .from('profiles')
+            .update({
+              full_name: formData.fullName.trim(),
+              phone: formData.mobile.trim() || null,
+              email: formData.email.trim().toLowerCase(),
+            })
+            .eq('id', data.user.id);
+        } catch {
+          // The trigger-created row is authoritative; this patch is cosmetic.
         }
-        alert('Registration submitted! Check your email for confirmation link.');
+        // Nothing else to do: App's onAuthStateChange picks up the session,
+        // the customer role gate passes, and the app opens automatically.
+        setSignedIn(true);
+      } else if (data.user) {
+        // Email confirmation still enabled — no session until the user
+        // confirms. Honest message (no fake auto-login claim).
+        alert('Registration submitted! Please confirm the account from the link in your email, then log in.');
       }
     } catch (err: any) {
       alert('Sign up server notice: ' + (err?.message || 'Connection offline or rate limit reached.'));
@@ -115,7 +120,7 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
 
         <div className="mb-8 text-center md:text-left">
           <h2 className="text-2xl font-bold text-[#26181c] mb-2">Create Account</h2>
-          <p className="text-sm text-[#5a3f47]">Join Nexora and start growing your business.</p>
+          <p className="text-sm text-[#5a3f47]">Create your Nexora customer account and book salons on any device.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -160,9 +165,9 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
             <span>I accept the <span className="text-[#e6007e] font-bold">Terms & Conditions</span></span>
           </label>
 
-          <button className="w-full bg-[#e6007e] text-white rounded-xl py-3.5 font-bold hover:bg-[#b90064] transition-colors mt-2 active:scale-[0.98] disabled:opacity-70 flex items-center justify-center gap-2" type="submit" disabled={isLoading}>
-            {isLoading && <span className="material-symbols-outlined animate-spin text-xl">progress_activity</span>}
-            {isLoading ? 'Creating Account...' : 'Sign Up'}
+          <button className="w-full bg-[#e6007e] text-white rounded-xl py-3.5 font-bold hover:bg-[#b90064] transition-colors mt-2 active:scale-[0.98] disabled:opacity-70 flex items-center justify-center gap-2" type="submit" disabled={isLoading || signedIn}>
+            {(isLoading || signedIn) && <span className="material-symbols-outlined animate-spin text-xl">progress_activity</span>}
+            {signedIn ? 'Account created — signing you in…' : isLoading ? 'Creating Account...' : 'Sign Up'}
           </button>
         </form>
 

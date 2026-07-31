@@ -6,7 +6,14 @@ import {
   INITIAL_LOCATION,
 } from './data/mockData';
 import { fetchPublicSalons } from './lib/salonRepository';
-import { createCustomerBooking, createAdvanceOrder, loadRazorpayCheckout, openRazorpayAdvanceCheckout } from './lib/bookingRepository';
+import { createCustomerBooking, createAdvanceOrder, loadRazorpayCheckout, openRazorpayAdvanceCheckout, listCustomerBookings, subscribeToCustomerBookings, CustomerBookingRow } from './lib/bookingRepository';
+import { loadProfile, updateProfile, uploadAvatar, avatarUrlWithVersion, subscribeToProfile, CustomerProfile, ProfilePatch } from './lib/profileRepository';
+import { loadFavorites, setFavorite, subscribeToFavorites } from './lib/favoritesRepository';
+import { loadSettings, saveSettings, settingsFromLegacyLocalStorage, SETTINGS_DEFAULTS } from './lib/settingsRepository';
+import { loadAddresses, importLegacyAddresses } from './lib/addressesRepository';
+import { loadPaymentMethods, importLegacyPaymentMethods, addUpiMethod } from './lib/paymentMethodsRepository';
+import { loadServerNotifications, subscribeToServerNotifications } from './lib/serverNotifications';
+import { purgeLegacyLocalStorage, readLegacyJson, readLegacyValue, LEGACY_MIGRATION_FLAG } from './lib/legacyLocalData';
 import { PaymentStatusTracker } from './components/PaymentStatusTracker';
 
 import { Header } from './components/Header';
@@ -215,17 +222,12 @@ export default function App() {
     return INITIAL_LOCATION;
   });
 
-  const [favorites, setFavorites] = useState<string[]>(() => {
-    const saved = localStorage.getItem('nexora_favorites');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse favorites:', e);
-      }
-    }
-    return [];
-  });
+  // Favourites + profile + bookings come from Supabase (single source of
+  // truth). They hydrate after login and stay live via Realtime channels.
+  const [profile, setProfile] = useState<CustomerProfile | null>(null);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [favoriteServiceIds, setFavoriteServiceIds] = useState<string[]>([]);
+  const [favoriteStaffIds, setFavoriteStaffIds] = useState<string[]>([]);
 
   const [recentlyViewed, setRecentlyViewed] = useState<string[]>(() => {
     const saved = localStorage.getItem('nexora_recently_viewed');
@@ -243,64 +245,287 @@ export default function App() {
     localStorage.setItem('nexora_recently_viewed', JSON.stringify(recentlyViewed));
   }, [recentlyViewed]);
 
-  const [favoriteProfessionals, setFavoriteProfessionals] = useState<SavedProfessional[]>(() => {
-    const saved = localStorage.getItem('nexora_favorite_pros');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse favorite professionals:', e);
+  // Resolved against the live salon catalogue before rendering.
+  const favoriteProfessionals: SavedProfessional[] = favoriteStaffIds.flatMap((staffId) => {
+    for (const salon of salons) {
+      const staffMember = salon.staff.find((s) => s.id === staffId);
+      if (staffMember) {
+        return [{
+          id: staffMember.id,
+          salonId: salon.id,
+          name: staffMember.name,
+          role: staffMember.role,
+          rating: staffMember.rating,
+          avatar: staffMember.avatar,
+          salonName: salon.name,
+          skills: [],
+        }];
       }
     }
     return [];
   });
 
-  const [favoriteServices, setFavoriteServices] = useState<SavedService[]>(() => {
-    const saved = localStorage.getItem('nexora_favorite_services');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse favorite services:', e);
+  const favoriteServices: SavedService[] = favoriteServiceIds.flatMap((serviceId) => {
+    for (const salon of salons) {
+      const service = salon.services.find((s) => s.id === serviceId);
+      if (service) {
+        return [{
+          id: service.id,
+          salonId: salon.id,
+          name: service.name,
+          durationMinutes: service.durationMinutes,
+          price: service.price,
+          salonName: salon.name,
+          category: service.category,
+        }];
       }
     }
     return [];
   });
 
-  const [bookings, setBookings] = useState<Booking[]>(() => {
-    const saved = localStorage.getItem('nexora_bookings');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch (e) {
-        console.error('Failed to parse saved bookings:', e);
-      }
-    }
-    return [];
-  });
+  // Server bookings are the authority. localOnlyBookings only bridges the
+  // instant between creating a booking and the next server refresh.
+  const [serverBookingRows, setServerBookingRows] = useState<CustomerBookingRow[]>([]);
+  const [serverBookingItems, setServerBookingItems] = useState<Record<string, string[]>>({});
+  const [localOnlyBookings, setLocalOnlyBookings] = useState<Booking[]>([]);
+  const [reviewedBookingIds, setReviewedBookingIds] = useState<string[]>([]);
+
+  const mapServerStatus = (status: string | null): Booking['status'] => {
+    const s = (status ?? '').toLowerCase();
+    if (s.includes('cancel') || s.includes('no_show') || s.includes('noshow')) return 'CANCELLED';
+    if (s.includes('complete') || s === 'done' || s.includes('served')) return 'COMPLETED';
+    if (s.includes('confirm') || s.includes('paid') || s.includes('success') || s.includes('capture')) return 'CONFIRMED';
+    if (s.includes('payment_pending') || s.includes('await') || s.includes('unpaid')) return 'payment_pending';
+    return 'PENDING';
+  };
+
+  const bookings: Booking[] = (() => {
+    const mapped: Booking[] = serverBookingRows.map((row) => {
+      const salon = salons.find((s) => s.id === row.salon_id);
+      const serviceIds = serverBookingItems[row.id] ?? [];
+      const services: Service[] = serviceIds.map((serviceId) => {
+        const found = salon?.services.find((s) => s.id === serviceId);
+        return found ?? { id: serviceId, name: 'Salon service', durationMinutes: 0, price: 0, category: '' };
+      });
+      const start = row.appointment_start ? new Date(row.appointment_start) : null;
+      const validStart = start && !Number.isNaN(start.valueOf()) ? start : null;
+      return {
+        id: row.id,
+        salonId: row.salon_id,
+        salonName: salon?.name ?? 'Salon',
+        services,
+        totalAmount: (row.total_paise ?? 0) / 100,
+        dateStr: validStart
+          ? validStart.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+          : '',
+        timeSlot: validStart
+          ? validStart.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+          : '',
+        status: mapServerStatus(row.status),
+        locationArea: salon?.area ?? '',
+        createdTime: row.created_at ? Date.parse(row.created_at) : Date.now(),
+        isReviewed: reviewedBookingIds.includes(row.id) || undefined,
+      };
+    });
+    const serverIds = new Set(mapped.map((b) => b.id));
+    const pending = localOnlyBookings
+      .filter((b) => !serverIds.has(b.id))
+      .map((b) => reviewedBookingIds.includes(b.id) ? { ...b, isReviewed: true } : b);
+    return [...pending, ...mapped];
+  })();
+
+  const setBookings = (updater: (prev: Booking[]) => Booking[]) => {
+    // Local-only mutations (e.g. cancel/review flags applied pre-refresh).
+    setLocalOnlyBookings((prevLocal) => {
+      const current = [...prevLocal];
+      return updater(current).filter((b) => !serverBookingRows.some((r) => r.id === b.id));
+    });
+  };
 
   const [confirmedModalBooking, setConfirmedModalBooking] = useState<Booking | null>(null);
-  const [initialBookingIdForBookings, setInitialBookingIdForBookings] = useState<string | undefined>(undefined);
+  const [initialBookingIdForBookings, setInitialBookingIdForBookings] = useState<string |undefined>(undefined);
 
-  // Notification States
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    const saved = localStorage.getItem('nexora_notifications');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse notifications:', e);
-      }
-    }
-    return [];
-  });
+  // Notifications: server rows hydrate after login; local entries are only
+  // ephemeral device notices (install/sync), never persisted as truth.
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   const [activePushOverlay, setActivePushOverlay] = useState<AppNotification | null>(null);
   const [isNotificationDrawerOpen, setIsNotificationDrawerOpen] = useState(false);
-  const [profileAvatar, setProfileAvatar] = useState<string>(() => {
-    return localStorage.getItem('profile_avatar') || '';
-  });
+
+  // ---- Server refresh helpers (used by bootstrap + realtime callbacks) ----
+  const refreshFavorites = React.useCallback(async () => {
+    if (!supabase || !user) return;
+    try {
+      const f = await loadFavorites(supabase, user.id);
+      setFavorites(f.salonIds);
+      setFavoriteServiceIds(f.serviceIds);
+      setFavoriteStaffIds(f.staffIds);
+    } catch (e: any) {
+      console.warn('Favourites sync notice:', e?.message || e);
+    }
+  }, [user?.id]);
+
+  const refreshBookings = React.useCallback(async () => {
+    if (!supabase || !user) return;
+    try {
+      const { bookings: rows, serviceIdsByBooking } = await listCustomerBookings(supabase, user.id);
+      setServerBookingRows(rows);
+      setServerBookingItems(serviceIdsByBooking);
+    } catch (e: any) {
+      console.warn('Bookings sync notice:', e?.message || e);
+    }
+  }, [user?.id]);
+
+  // ---- Unified bootstrap: hydrate profile/favourites/bookings/notifications,
+  //      run the one-time legacy-localStorage migration, then subscribe. ----
+  useEffect(() => {
+    if (!supabase || !user) return;
+    const client = supabase;
+    const uid: string = user.id;
+    let cancelled = false;
+    const unsubs: Array<() => void> = [];
+
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    (async () => {
+      try {
+        // 1) Hydrate profile (header avatar + profile screens)
+        let prof: CustomerProfile | null = null;
+        try { prof = await loadProfile(client, uid); } catch (e: any) { console.warn('Profile load notice:', e?.message || e); }
+        if (cancelled) return;
+        setProfile(prof);
+
+        // 2) One-time migrate-up of pre-unification localStorage values,
+        //    then purge the local copies (Supabase becomes the only truth).
+        const alreadyMigrated = readLegacyValue(LEGACY_MIGRATION_FLAG) === 'done';
+        if (!alreadyMigrated) {
+          try {
+            if (prof) {
+              // Import only genuinely user-entered values; never import the
+              // old fabricated persona defaults.
+              const patch: ProfilePatch = {};
+              const legacyName = readLegacyValue('profile_name');
+              if (!prof.full_name && legacyName && legacyName !== 'Customer') patch.full_name = legacyName;
+              const legacyPhone = readLegacyValue('profile_phone');
+              if (!prof.phone && legacyPhone && legacyPhone !== '+91 98765 43210') patch.phone = legacyPhone;
+              const legacyDob = readLegacyValue('profile_dob');
+              if (!prof.date_of_birth && legacyDob && legacyDob !== '1992-05-14') patch.date_of_birth = legacyDob;
+              const legacyGender = readLegacyValue('profile_gender');
+              if (!prof.gender && legacyGender) patch.gender = legacyGender;
+              const legacyCity = readLegacyValue('profile_city');
+              if (!prof.preferred_city && legacyCity) patch.preferred_city = legacyCity;
+              const legacyArea = readLegacyValue('profile_area');
+              if (!prof.preferred_area && legacyArea) patch.preferred_area = legacyArea;
+              if (Object.keys(patch).length > 0) {
+                prof = await updateProfile(client, uid, patch);
+                if (!cancelled) setProfile(prof);
+              }
+            }
+            // settings row
+            try {
+              const { exists } = await loadSettings(client, uid);
+              if (!exists) {
+                const legacy = settingsFromLegacyLocalStorage(readLegacyValue);
+                await saveSettings(client, uid, { ...SETTINGS_DEFAULTS, ...legacy });
+              }
+            } catch (e: any) { console.warn('Settings migration notice:', e?.message || e); }
+            // favourites (salon ids only if they resolve to the catalogue; all
+            // uuids are accepted for staff/service favourites)
+            const legacySalonFavs = readLegacyJson<string[]>('nexora_favorites') ?? [];
+            const legacyProFavs = (readLegacyJson<Array<{ id: string }>>('nexora_favorite_pros') ?? []).map((p) => p?.id).filter(Boolean) as string[];
+            const legacyServiceFavs = (readLegacyJson<Array<{ id: string }>>('nexora_favorite_services') ?? []).map((s) => s?.id).filter(Boolean) as string[];
+            for (const id of legacySalonFavs.filter((x) => UUID_RE.test(x))) {
+              await setFavorite(client, uid, 'salon', id, true).catch(() => undefined);
+            }
+            for (const id of legacyProFavs.filter((x) => UUID_RE.test(x))) {
+              await setFavorite(client, uid, 'staff', id, true).catch(() => undefined);
+            }
+            for (const id of legacyServiceFavs.filter((x) => UUID_RE.test(x))) {
+              await setFavorite(client, uid, 'service', id, true).catch(() => undefined);
+            }
+            // addresses (import only when the server has none yet)
+            try {
+              const serverAddrs = await loadAddresses(client, uid);
+              const legacyAddrs = readLegacyJson<Array<any>>('nexora_saved_addresses') ?? [];
+              const realAddrs = legacyAddrs.filter((a) => a && typeof a.id === 'string' && !a.id.startsWith('addr-'));
+              if (serverAddrs.length === 0 && realAddrs.length > 0) {
+                await importLegacyAddresses(client, uid, realAddrs);
+              }
+            } catch (e: any) { console.warn('Address migration notice:', e?.message || e); }
+            // payment methods (import only when the server has none yet)
+            try {
+              const existing = await loadPaymentMethods(client, uid);
+              const legacyUpis = (readLegacyJson<Array<any>>('nexora_saved_upis') ?? []).filter((u) => u && typeof u.id === 'string' && !u.id.startsWith('upi-'));
+              const legacyCards = (readLegacyJson<Array<any>>('nexora_saved_cards') ?? []).filter((c) => c && typeof c.id === 'string' && !c.id.startsWith('card-'));
+              if (existing.upis.length === 0 && existing.cards.length === 0 && (legacyUpis.length || legacyCards.length)) {
+                await importLegacyPaymentMethods(client, uid, legacyUpis, legacyCards);
+              }
+            } catch (e: any) { console.warn('Payment-method migration notice:', e?.message || e); }
+          } catch (e: any) {
+            console.warn('Legacy migration notice:', e?.message || e);
+          }
+          try { localStorage.setItem(LEGACY_MIGRATION_FLAG, 'done'); } catch { /* storage unavailable */ }
+          purgeLegacyLocalStorage();
+        }
+
+        // 3) Hydrate favourites / bookings / notifications from the server
+        await Promise.all([refreshFavorites(), refreshBookings()]);
+        try {
+          const serverNotifs = await loadServerNotifications(client, uid);
+          if (!cancelled) {
+            setNotifications((prev) => {
+              const localEphemeral = prev.filter((n) => !n.id.startsWith('srv-'));
+              return [...serverNotifs, ...localEphemeral];
+            });
+          }
+        } catch (e: any) {
+          console.warn('Notifications sync notice:', e?.message || e);
+        }
+
+        // 4) Realtime subscriptions (task STEP 6)
+        if (!cancelled) {
+          unsubs.push(subscribeToProfile(client, uid, (p) => setProfile(p)));
+          unsubs.push(subscribeToFavorites(client, uid, refreshFavorites));
+          unsubs.push(subscribeToCustomerBookings(client, uid, refreshBookings));
+          unsubs.push(subscribeToServerNotifications(client, uid, (n) => {
+            setNotifications((prev) => [n, ...prev.filter((x) => x.id !== n.id)]);
+          }));
+        }
+      } catch (e: any) {
+        console.warn('Account bootstrap notice:', e?.message || e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubs.forEach((unsub) => unsub());
+    };
+  }, [user?.id, refreshFavorites, refreshBookings]);
+
+  // Profile write handlers shared with screens (UPDATE-only; task STEP 10)
+  const handleSaveProfile = React.useCallback(async (patch: ProfilePatch): Promise<boolean> => {
+    if (!supabase || !user) return false;
+    try {
+      const updated = await updateProfile(supabase, user.id, patch);
+      setProfile(updated);
+      return true;
+    } catch (e: any) {
+      console.warn('Profile save notice:', e?.message || e);
+      return false;
+    }
+  }, [user?.id]);
+
+  const handleUploadAvatar = React.useCallback(async (file: File): Promise<boolean> => {
+    if (!supabase || !user) return false;
+    try {
+      const updated = await uploadAvatar(supabase, user.id, file);
+      setProfile(updated);
+      return true;
+    } catch (e: any) {
+      console.warn('Avatar upload notice:', e?.message || e);
+      return false;
+    }
+  }, [user?.id]);
 
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -311,29 +536,9 @@ export default function App() {
       if (event.data.type === 'SYNC_COMPLETE') {
         console.log('Sync complete received from SW', event.data);
         setIsSyncing(false);
-        
-        // If data was passed from SW, use it to update state
-        if (event.data.data && Array.isArray(event.data.data)) {
-          setBookings(prev => {
-            const newBookings = [...prev];
-            event.data.data.forEach((newBk: Booking) => {
-              const idx = newBookings.findIndex(b => b.id === newBk.id);
-              if (idx > -1) {
-                newBookings[idx] = newBk;
-              } else {
-                newBookings.push(newBk);
-              }
-            });
-            return newBookings;
-          });
-        } else {
-          // Fallback: Refresh bookings from localStorage 
-          const saved = localStorage.getItem('nexora_bookings');
-          if (saved) {
-            setBookings(JSON.parse(saved));
-          }
-        }
-        
+        // sw.js no longer injects booking data; the server refresh is the truth.
+        void refreshBookings();
+
         // Show a temporary sync notification
         const syncNotif: AppNotification = {
           id: `sync-${Date.now()}`,
@@ -465,30 +670,11 @@ export default function App() {
     };
   }, []);
 
-  // Sync state to localStorage
-  useEffect(() => {
-    localStorage.setItem('nexora_favorites', JSON.stringify(favorites));
-  }, [favorites]);
-
-  useEffect(() => {
-    localStorage.setItem('nexora_favorite_pros', JSON.stringify(favoriteProfessionals));
-  }, [favoriteProfessionals]);
-
-  useEffect(() => {
-    localStorage.setItem('nexora_favorite_services', JSON.stringify(favoriteServices));
-  }, [favoriteServices]);
-
-  useEffect(() => {
-    localStorage.setItem('nexora_bookings', JSON.stringify(bookings));
-  }, [bookings]);
-
+  // Only device-local UI state is cached locally (browsing location,
+  // recently viewed). All account/customer data lives in Supabase.
   useEffect(() => {
     localStorage.setItem('nexora_user_location', JSON.stringify(userLocation));
   }, [userLocation]);
-
-  useEffect(() => {
-    localStorage.setItem('nexora_notifications', JSON.stringify(notifications));
-  }, [notifications]);
 
   // Trigger push notification helper
   const triggerPushNotificationForBooking = (targetBookingId?: string) => {
@@ -528,10 +714,42 @@ export default function App() {
     }
   };
 
+  // Favourites: optimistic local toggle + Supabase write; Realtime keeps
+  // every logged-in device in sync (task STEPS 6/7).
   const handleToggleFavorite = (salonId: string) => {
+    const willFavorite = !favorites.includes(salonId);
     setFavorites((prev) =>
-      prev.includes(salonId) ? prev.filter((id) => id !== salonId) : [...prev, salonId]
+      willFavorite ? [...prev, salonId] : prev.filter((id) => id !== salonId)
     );
+    if (supabase && user) {
+      setFavorite(supabase, user.id, 'salon', salonId, willFavorite).catch((e) => {
+        console.warn('Favourite write notice:', e?.message || e);
+        // revert on failure
+        setFavorites((prev) =>
+          willFavorite ? prev.filter((id) => id !== salonId) : [...prev, salonId]
+        );
+      });
+    }
+  };
+
+  const handleRemoveFavoriteProfessional = (proId: string) => {
+    setFavoriteStaffIds((prev) => prev.filter((id) => id !== proId));
+    if (supabase && user) {
+      setFavorite(supabase, user.id, 'staff', proId, false).catch((e) => {
+        console.warn('Favourite write notice:', e?.message || e);
+        setFavoriteStaffIds((prev) => [...prev, proId]);
+      });
+    }
+  };
+
+  const handleRemoveFavoriteService = (servId: string) => {
+    setFavoriteServiceIds((prev) => prev.filter((id) => id !== servId));
+    if (supabase && user) {
+      setFavorite(supabase, user.id, 'service', servId, false).catch((e) => {
+        console.warn('Favourite write notice:', e?.message || e);
+        setFavoriteServiceIds((prev) => [...prev, servId]);
+      });
+    }
   };
 
   const handleSelectSalon = (salon: Salon) => {
@@ -613,6 +831,8 @@ export default function App() {
     };
 
     setBookings((prev) => [newBooking, ...prev]);
+    // Server remains the truth — pull the freshly created row right away.
+    void refreshBookings();
     // Start live in-app payment tracking for this booking (QR/UPI flow).
     setPaymentWatch({
       bookingId: newBooking.id,
@@ -630,6 +850,8 @@ export default function App() {
         b.id === bookingId ? { ...b, status: 'CONFIRMED' as Booking['status'] } : b,
       ),
     );
+    // Reconcile immediately with the authoritative bookings row.
+    void refreshBookings();
   };
 
   const handleCancelBooking = (bookingId: string) => {
@@ -639,9 +861,7 @@ export default function App() {
   };
 
   const handleMarkBookingReviewed = (bookingId: string) => {
-    setBookings((prev) =>
-      prev.map((b) => (b.id === bookingId ? { ...b, isReviewed: true } : b))
-    );
+    setReviewedBookingIds((prev) => (prev.includes(bookingId) ? prev : [...prev, bookingId]));
   };
 
   const handleAddReviewFromBooking = (salonId: string, newRev: Omit<ServiceReview, 'id' | 'date'>) => {
@@ -822,7 +1042,7 @@ export default function App() {
             unreadNotificationCount={unreadCount}
             onOpenNotifications={() => setIsNotificationDrawerOpen(true)}
             onOpenQrScanner={() => setIsGlobalScanQrOpen(true)}
-            userAvatar={profileAvatar}
+            userAvatar={avatarUrlWithVersion(profile)}
             isSyncing={isSyncing}
           />
         )}
@@ -884,6 +1104,7 @@ export default function App() {
               isFavorite={favorites.includes(selectedSalon.id)}
               onToggleFavorite={() => handleToggleFavorite(selectedSalon.id)}
               bookings={bookings}
+              customerName={profile?.full_name ?? ''}
             />
           )}
 
@@ -906,6 +1127,7 @@ export default function App() {
               onTriggerTestNotification={triggerPushNotificationForBooking}
               onAddReview={handleAddReviewFromBooking}
               onMarkBookingReviewed={handleMarkBookingReviewed}
+              customerName={profile?.full_name ?? ''}
               initialSelectedBookingId={initialBookingIdForBookings}
               onTrackPayment={(booking) =>
                 setPaymentWatch({
@@ -924,18 +1146,14 @@ export default function App() {
               favoriteProfessionals={favoriteProfessionals}
               favoriteServices={favoriteServices}
               onToggleFavoriteSalon={handleToggleFavorite}
-              onToggleFavoriteProfessional={(proId) => {
-                setFavoriteProfessionals((prev) => prev.filter((p) => p.id !== proId));
-              }}
-              onToggleFavoriteService={(servId) => {
-                setFavoriteServices((prev) => prev.filter((s) => s.id !== servId));
-              }}
+              onToggleFavoriteProfessional={handleRemoveFavoriteProfessional}
+              onToggleFavoriteService={handleRemoveFavoriteService}
               onSelectSalon={handleSelectSalon}
               onNavigate={(s) => setCurrentScreen(s)}
             />
           )}
 
-          {currentScreen === 'rewards' && <RewardsScreen bookings={bookings} />}
+          {currentScreen === 'rewards' && <RewardsScreen bookings={bookings} customerName={profile?.full_name ?? ''} />}
 
           {currentScreen === 'profile' && (
             <ProfileScreen
@@ -945,7 +1163,10 @@ export default function App() {
               onNavigate={(s) => setCurrentScreen(s)}
               onBack={handleBack}
               onOpenLocation={() => setCurrentScreen('location-modal')}
-              onAvatarUpdate={(newAvatar) => setProfileAvatar(newAvatar)}
+              customerId={user.id}
+              profile={profile}
+              onSaveProfile={handleSaveProfile}
+              onUploadAvatar={handleUploadAvatar}
             />
           )}
 
@@ -953,6 +1174,7 @@ export default function App() {
             <SavedAddressesScreen
               onBack={handleBack}
               onNavigate={(s) => setCurrentScreen(s)}
+              customerId={user.id}
             />
           )}
 
@@ -960,6 +1182,7 @@ export default function App() {
             <SupportScreen
               onBack={handleBack}
               onNavigate={(s) => setCurrentScreen(s)}
+              customerId={user.id}
             />
           )}
 
@@ -967,6 +1190,7 @@ export default function App() {
             <SettingsScreen
               onBack={handleBack}
               onNavigate={(s) => setCurrentScreen(s)}
+              customerId={user.id}
               onLogout={async () => {
                 setUser(null);
                 await supabase?.auth.signOut();
@@ -1030,9 +1254,11 @@ export default function App() {
         isOpen={isGlobalScanQrOpen}
         onClose={() => setIsGlobalScanQrOpen(false)}
         onUpiScanned={(scannedUpi) => {
-          const saved = localStorage.getItem('nexora_saved_upis');
-          const list: SavedUpi[] = saved ? JSON.parse(saved) : [];
-          localStorage.setItem('nexora_saved_upis', JSON.stringify([scannedUpi, ...list]));
+          if (supabase && user) {
+            addUpiMethod(supabase, user.id, scannedUpi).catch((e) =>
+              console.warn('UPI save notice:', e?.message || e),
+            );
+          }
           setIsGlobalScanQrOpen(false);
           setCurrentScreen('profile');
         }}
@@ -1056,9 +1282,11 @@ export default function App() {
           setIsGlobalScanQrOpen(true);
         }}
         onUpiAdded={(newUpi) => {
-          const saved = localStorage.getItem('nexora_saved_upis');
-          const list: SavedUpi[] = saved ? JSON.parse(saved) : [];
-          localStorage.setItem('nexora_saved_upis', JSON.stringify([newUpi, ...list]));
+          if (supabase && user) {
+            addUpiMethod(supabase, user.id, newUpi).catch((e) =>
+              console.warn('UPI save notice:', e?.message || e),
+            );
+          }
           setIsGlobalAddUpiOpen(false);
           setGlobalPrefilledUpi('');
           setCurrentScreen('profile');

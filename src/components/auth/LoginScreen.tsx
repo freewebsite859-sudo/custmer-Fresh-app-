@@ -99,7 +99,7 @@ export const LoginScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}
         {/* Content: Titles */}
         <div className="mb-8 text-center md:text-left">
           <h2 className="text-2xl font-bold text-[#26181c] mb-2">Welcome Back</h2>
-          <p className="text-sm text-[#5a3f47]">Login to manage your salons and earnings.</p>
+          <p className="text-sm text-[#5a3f47]">Log in with your Nexora customer account — your profile, bookings and favourites stay in sync on every device.</p>
         </div>
 
         {/* Form */}
