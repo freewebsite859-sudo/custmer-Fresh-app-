@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AVATAR_URL } from '../data/mockData';
+import { JAIPUR_LOCATIONS } from '../data/locations';
+import { supabase } from '../lib/supabaseClient';
 import { Screen, UserLocation, Booking, Address } from '../types';
 import { AddCardModal, SavedCard } from './AddCardModal';
 import { AddUpiModal, SavedUpi } from './AddUpiModal';
@@ -76,8 +78,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   // Custom high fidelity profile details states
   const [dob, setDob] = useState<string>(() => localStorage.getItem('profile_dob') || '1992-05-14');
   const [gender, setGender] = useState<string>(() => localStorage.getItem('profile_gender') || 'female');
-  const [preferredCity, setPreferredCity] = useState<string>(() => localStorage.getItem('profile_city') || 'mumbai');
-  const [preferredArea, setPreferredArea] = useState<string>(() => localStorage.getItem('profile_area') || 'Bandra West');
+  const [preferredCity, setPreferredCity] = useState<string>(() => localStorage.getItem('profile_city') || 'jaipur');
+  const [preferredArea, setPreferredArea] = useState<string>(() => localStorage.getItem('profile_area') || 'Jhotwara');
 
   // Modal open states
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -97,6 +99,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [isAddUpiOpen, setIsAddUpiOpen] = useState(false);
   const [isScanQrOpen, setIsScanQrOpen] = useState(false);
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
   const [prefilledUpiInput, setPrefilledUpiInput] = useState<string>('');
 
   const [savedCards, setSavedCards] = useState<SavedCard[]>(() => {
@@ -322,7 +326,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   // Handler for saving profile edits
-  const handleSaveProfile = (
+  const handleSaveProfile = async (
     tempName: string,
     tempEmail: string,
     tempPhone: string,
@@ -341,6 +345,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       return;
     }
     setNameError(null);
+    setIsSavingProfile(true);
 
     setName(tempName);
     setEmail(tempEmail);
@@ -364,8 +369,106 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       onAvatarUpdate(tempAvatar);
     }
 
+    // Best-effort cloud sync — only columns that exist in the profiles schema
+    // (full_name, mobile). Never overwrite platform_role or other fields.
+    let synced = false;
+    try {
+      if (supabase) {
+        const { data } = await supabase.auth.getSession();
+        const user = data.session?.user;
+        if (user) {
+          const { error } = await supabase.from('profiles').upsert(
+            { id: user.id, full_name: tempName.trim(), mobile: tempPhone.trim() || null },
+            { onConflict: 'id' }
+          );
+          synced = !error;
+        }
+      }
+    } catch {
+      synced = false;
+    }
+
+    setIsSavingProfile(false);
     setIsEditOpen(false);
-    triggerToast('Profile updated successfully!');
+    triggerToast(synced ? 'Profile updated & synced to your account.' : 'Profile updated on this device.');
+  };
+
+  // Real GPS detection — reverse-geocodes to city/area and fills the form.
+  // Honest behaviour: no hardcoded location, explicit messages on failure.
+  const handleDetectLocation = () => {
+    if (isDetectingLocation) return;
+    if (!('geolocation' in navigator)) {
+      triggerToast('Geolocation is not supported on this device.');
+      return;
+    }
+    setIsDetectingLocation(true);
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          const resp = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=16&addressdetails=1`,
+            { headers: { 'Accept-Language': 'en' } }
+          );
+          if (!resp.ok) throw new Error(`geocoder HTTP ${resp.status}`);
+          const data = await resp.json();
+          const addr = data?.address || {};
+          const cityRaw = String(addr.city || addr.town || addr.county || addr.state_district || '');
+          const areaRaw = String(addr.suburb || addr.neighbourhood || addr.residential || addr.village || addr.city_district || '');
+          const cityNorm = cityRaw.toLowerCase();
+
+          if (cityNorm.includes('jaipur')) {
+            setEditFormCity('jaipur');
+            const flatAreas: Array<[string, string]> = Object.values(JAIPUR_LOCATIONS)
+              .flat()
+              .map((a) => [a.toLowerCase(), a] as [string, string]);
+            const needle = areaRaw.toLowerCase();
+            const match = flatAreas.find(([lower]) => lower === needle)
+              || (needle ? flatAreas.find(([lower]) => lower.includes(needle) || needle.includes(lower)) : undefined);
+            if (match) {
+              setEditFormArea(match[1]);
+              triggerToast(`Location detected: ${match[1]}, Jaipur. Tap Save Changes to keep it.`);
+            } else if (areaRaw) {
+              setEditFormArea(areaRaw);
+              triggerToast(`Detected area "${areaRaw}" — please verify it. Tap Save Changes to keep it.`);
+            } else {
+              triggerToast('Jaipur detected. Please pick your area from the list.');
+            }
+          } else if (cityNorm) {
+            const mapped = cityNorm.includes('bengaluru') || cityNorm.includes('bangalore')
+              ? 'bangalore'
+              : cityNorm.includes('delhi')
+                ? 'delhi'
+                : cityNorm.includes('mumbai')
+                  ? 'mumbai'
+                  : null;
+            if (mapped) {
+              setEditFormCity(mapped);
+              if (areaRaw) setEditFormArea(areaRaw);
+              triggerToast(`Location detected: ${cityRaw}. Tap Save Changes to keep it.`);
+            } else {
+              triggerToast(`Detected city "${cityRaw}" is not in the supported list — selection unchanged.`);
+            }
+          } else {
+            triggerToast('Could not resolve city from GPS. Please select manually.');
+          }
+        } catch {
+          triggerToast('Location lookup failed. Please select manually.');
+        } finally {
+          setIsDetectingLocation(false);
+        }
+      },
+      (err) => {
+        setIsDetectingLocation(false);
+        triggerToast(
+          err.code === 1
+            ? 'Location permission denied — please select your area manually.'
+            : 'Could not get GPS position — please select manually.'
+        );
+      },
+      { timeout: 10000, maximumAge: 60000 }
+    );
   };
 
   const [isCopiedLink, setIsCopiedLink] = useState(false);
@@ -555,9 +658,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   // Preset premium avatars to choose from
   const PRESET_AVATARS = [
-    AVATAR_URL,
-    'https://lh3.googleusercontent.com/aida/AP1WRLuLR56pD9GonrMNOFLovzqB4K0uRqCLJ5jVjZ5AOXW65v2AUqIlgMNK94k9oH7a-mAX09tpSWTArq6KwqQZR39dGTXOzNP_EG6nrdJPFkZC8MUIrrWVoszEwUimTXs4MY8IITGOzklfrI8DOAm6PIzmcw9rO0AZfuN7fU98bX-QUTie_Y2r-xjRUx1ntvPJZECb6K232aq2uCXKMy5LxmnHAharJjKNwpMlWjotHpZ-edgIBQKWudkkilc',
-    'https://lh3.googleusercontent.com/aida/AP1WRLuhxcxErpvCqcAvbAhXlS9HJ4VBtxdqSXkQBYdwTvNyUssNJGitaUfODwl-sYqw-o6p4MTAuiKGukafblmH6vPQG7yu8QsiFVGHYrerD2_-aNJfqYenT5CeRzD6oSdEuGBRkKmuR16s63cxyK7bF2f5M0_VJg-xgomD9x7_t6PetyWx4egTiE6Ew03IQJvsf9NM7mAv2EvJGuDVOnWgY1z-_PIW7eC_Fp9bjHckatr-ffYArBLGr97JeQ',
+    '/avatars/avatar-1.png',
+    '/avatars/avatar-2.png',
+    '/avatars/avatar-3.png',
+    '/avatars/avatar-4.png',
   ];
 
   // Temporaries for form editing
@@ -1157,6 +1261,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     onChange={(e) => setEditFormCity(e.target.value)}
                     className="w-full h-12 bg-[#fcf9f8] text-[14px] text-[#26181c] rounded-xl pl-11 pr-10 border border-[#e8e8e8] focus:outline-none focus:ring-2 focus:ring-[#b90064] transition-all appearance-none font-medium"
                   >
+                    <option value="jaipur">Jaipur</option>
                     <option value="mumbai">Mumbai</option>
                     <option value="delhi">Delhi NCR</option>
                     <option value="bangalore">Bangalore</option>
@@ -1176,18 +1281,19 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     value={editFormArea}
                     onChange={(e) => setEditFormArea(e.target.value)}
                     className="w-full h-12 bg-[#fcf9f8] text-[14px] text-[#26181c] rounded-xl pl-11 pr-12 border border-[#e8e8e8] focus:outline-none focus:ring-2 focus:ring-[#b90064] transition-all"
-                    placeholder="Bandra West"
+                    placeholder="e.g. Jhotwara"
                   />
                   <button
                     type="button"
-                    onClick={() => {
-                      setEditFormArea('Bandra West');
-                      triggerToast('GPS location updated to Bandra West!');
-                    }}
-                    className="absolute right-3 w-8 h-8 text-[#b90064] hover:bg-[#ffe8ed] rounded-full transition-colors flex items-center justify-center cursor-pointer"
-                    title="Get Current Location"
+                    onClick={handleDetectLocation}
+                    disabled={isDetectingLocation}
+                    className="absolute right-3 w-8 h-8 text-[#b90064] hover:bg-[#ffe8ed] rounded-full transition-colors flex items-center justify-center cursor-pointer disabled:opacity-60"
+                    title="Detect Current Location (GPS)"
+                    aria-label="Detect current location"
                   >
-                    <span className="material-symbols-outlined text-[18px]">my_location</span>
+                    <span className={`material-symbols-outlined text-[18px] ${isDetectingLocation ? 'animate-spin' : ''}`}>
+                      {isDetectingLocation ? 'progress_activity' : 'my_location'}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -1206,6 +1312,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </button>
             <button
               type="button"
+              disabled={isSavingProfile}
               onClick={() =>
                 handleSaveProfile(
                   editFormName,
@@ -1218,9 +1325,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   editFormArea
                 )
               }
-              className="flex-1 h-12 bg-[#b90064] text-white font-bold rounded-xl transition-all shadow-md hover:bg-[#8e004b] cursor-pointer"
+              className="flex-1 h-12 bg-[#b90064] text-white font-bold rounded-xl transition-all shadow-md hover:bg-[#8e004b] cursor-pointer disabled:opacity-70 flex items-center justify-center gap-2"
             >
-              Save Changes
+              {isSavingProfile && (
+                <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
+              )}
+              {isSavingProfile ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
 
