@@ -13,7 +13,7 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
     confirmPassword: '',
     mobile: '',
     role: 'customer' as PlatformRole,
-    termsAccepted: false,
+    termsAccepted: true,
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -21,27 +21,21 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
   const [signedIn, setSignedIn] = useState(false);
 
   const validatePassword = (password: string) => {
-    const minLength = 8;
-    const hasUpperCase = /[A-Z]/.test(password);
-    const hasLowerCase = /[a-z]/.test(password);
-    const hasNumber = /[0-9]/.test(password);
-    const hasSpecialChar = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]+/.test(password);
-
-    return password.length >= minLength && hasUpperCase && hasLowerCase && hasNumber && hasSpecialChar;
+    return password.length >= 6;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
-    if (!formData.fullName || !formData.email || !formData.mobile) {
-      alert('Please fill in all fields.');
+    if (!formData.email) {
+      alert('Please enter your email address.');
       setIsLoading(false);
       return;
     }
     
     if (!validatePassword(formData.password)) {
-      alert('Password must be at least 8 characters, include uppercase, lowercase, number, and special character. Example: Nexora@123');
+      alert('Password must be at least 6 characters.');
       setIsLoading(false);
       return;
     }
@@ -83,7 +77,7 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
           const seededProfile = await waitForProfile(supabase, data.user.id, { attempts: 6, delayMs: 350 });
           if (seededProfile) {
             await updateProfile(supabase, data.user.id, {
-              full_name: formData.fullName.trim(),
+              full_name: formData.fullName.trim() || formData.email.split('@')[0],
               phone: formData.mobile.trim() || null,
             });
           }
