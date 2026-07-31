@@ -1,7 +1,6 @@
 import { PaymentScreen } from "./PaymentScreen";
-import React, { useState } from 'react';
-import { Salon, Service, Staff, WaitlistEntry } from '../types';
-import { WaitlistModal } from './WaitlistModal';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Salon, Service, Staff, Booking } from '../types';
 
 interface CheckoutScreenProps {
   salon: Salon;
@@ -13,10 +12,10 @@ interface CheckoutScreenProps {
     totalAmount: number;
     dateStr: string;
     timeSlot: string;
+    appointmentStart: Date;
     staffName?: string;
-    status?: 'CONFIRMED' | 'payment_pending';
-    bookingId?: string;
-  }, onSuccess?: () => void) => void;
+    customerNote?: string;
+  }) => Promise<Booking>;
   onBack: () => void;
 }
 
@@ -28,81 +27,115 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
   onBack,
 }) => {
   const [selectedDateIdx, setSelectedDateIdx] = useState<number>(0);
-  const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('11:00 AM');
-  const [currentMonthYear, setCurrentMonthYear] = useState<string>('July 2024');
-
-  // Waitlist State
-  const [isWaitlistModalOpen, setIsWaitlistModalOpen] = useState<boolean>(false);
-  const [waitlistSlot, setWaitlistSlot] = useState<string>('09:00 AM');
-  const [waitlistJoinedToast, setWaitlistJoinedToast] = useState<string | null>(null);
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
+  const [weekOffset, setWeekOffset] = useState<number>(0);
+  const [customerNote, setCustomerNote] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [step, setStep] = useState<1 | 2>(1);
-
-  const handleOpenWaitlist = (slotTime: string) => {
-    setWaitlistSlot(slotTime);
-    setIsWaitlistModalOpen(true);
-  };
-
-  const handleWaitlistSuccess = (entry: WaitlistEntry) => {
-    setWaitlistJoinedToast(`Waitlist Active: You will be notified instantly if ${entry.timeSlot} on ${entry.dateStr} opens up!`);
-    setTimeout(() => {
-      setWaitlistJoinedToast(null);
-    }, 5000);
-  };
 
   const totalPrice = selectedServices.reduce((sum, s) => sum + s.price, 0);
 
-  // Generate 7 days starting from Wednesday July 24
-  const dateOptions = [
-    { dayName: 'Wed', dateNum: '24', fullDate: 'Wed 24 Jul', isAvailable: true },
-    { dayName: 'Thu', dateNum: '25', fullDate: 'Thu 25 Jul', isAvailable: true },
-    { dayName: 'Fri', dateNum: '26', fullDate: 'Fri 26 Jul', isAvailable: true },
-    { dayName: 'Sat', dateNum: '27', fullDate: 'Sat 27 Jul', isAvailable: true },
-    { dayName: 'Sun', dateNum: '28', fullDate: 'Sun 28 Jul', isAvailable: false },
-    { dayName: 'Mon', dateNum: '29', fullDate: 'Mon 29 Jul', isAvailable: true },
-    { dayName: 'Tue', dateNum: '30', fullDate: 'Tue 30 Jul', isAvailable: true },
-  ];
+  // Rolling 7-day window starting from the REAL current date (no hardcoded days).
+  const dateOptions = useMemo(() => {
+    const now = new Date();
+    const base = new Date(now.getFullYear(), now.getMonth(), now.getDate() + weekOffset * 7);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i);
+      const dayName = d.toLocaleDateString('en-US', { weekday: 'short' });
+      const dateNum = String(d.getDate());
+      const monthShort = d.toLocaleDateString('en-US', { month: 'short' });
+      const monthYear = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      const isoDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return { dayName, dateNum, fullDate: `${dayName} ${dateNum} ${monthShort}`, monthYear, isoDate, isToday: i === 0 && weekOffset === 0 };
+    });
+  }, [weekOffset]);
 
-  const timeSlots = {
-    morning: [
-      { time: '09:00 AM', disabled: true },
-      { time: '09:30 AM', disabled: true },
-      { time: '10:00 AM', disabled: false },
-      { time: '10:30 AM', disabled: false },
-      { time: '11:00 AM', disabled: false },
-      { time: '11:30 AM', disabled: false },
-    ],
-    afternoon: [
-      { time: '12:00 PM', disabled: false },
-      { time: '12:30 PM', disabled: false },
-      { time: '01:00 PM', disabled: false },
-      { time: '02:00 PM', disabled: false },
-      { time: '03:00 PM', disabled: true },
-      { time: '04:30 PM', disabled: false },
-    ],
-    evening: [
-      { time: '05:00 PM', disabled: false },
-      { time: '06:00 PM', disabled: false },
-      { time: '07:00 PM', disabled: false },
-    ],
+  // Slots derive from the salon's real opening hours (e.g. "9:00 AM – 8:00 PM"), hourly grid.
+  const parseHour = (text: string): number | null => {
+    const m = /(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i.exec(text || '');
+    if (!m) return null;
+    let h = parseInt(m[1], 10) % 12;
+    if (m[3].toUpperCase() === 'PM') h += 12;
+    return h * 60 + parseInt(m[2] || '0', 10);
+  };
+  const formatSlot = (mins: number): string => {
+    const h24 = Math.floor(mins / 60);
+    const mm = String(mins % 60).padStart(2, '0');
+    const suffix = h24 >= 12 ? 'PM' : 'AM';
+    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    return `${String(h12).padStart(2, '0')}:${mm} ${suffix}`;
   };
 
+  const timeSlots = useMemo(() => {
+    const parts = (salon.hours || '').split(/[–-]/);
+    const opens = parseHour(parts[0] || '') ?? 9 * 60;
+    const closes = parseHour(parts[1] || '') ?? 20 * 60;
+    const buckets = {
+      morning: [] as { time: string; disabled: boolean }[],
+      afternoon: [] as { time: string; disabled: boolean }[],
+      evening: [] as { time: string; disabled: boolean }[],
+    };
+    const now = new Date();
+    const nowMins = now.getHours() * 60 + now.getMinutes();
+    const activeIsToday = dateOptions[selectedDateIdx]?.isToday === true;
+    for (let m = opens; m < closes; m += 60) {
+      const entry = { time: formatSlot(m), disabled: activeIsToday && m <= nowMins };
+      if (m < 12 * 60) buckets.morning.push(entry);
+      else if (m < 17 * 60) buckets.afternoon.push(entry);
+      else buckets.evening.push(entry);
+    }
+    return buckets;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [salon.hours, dateOptions, selectedDateIdx]);
+
   const activeDateObj = dateOptions[selectedDateIdx] || dateOptions[0];
+
+  // Keep the selection on an enabled slot whenever the day/hours grid changes.
+  useEffect(() => {
+    const all = [...timeSlots.morning, ...timeSlots.afternoon, ...timeSlots.evening];
+    const current = all.find((s) => s.time === selectedTimeSlot);
+    if (!current || current.disabled) {
+      const firstOpen = all.find((s) => !s.disabled);
+      setSelectedTimeSlot(firstOpen ? firstOpen.time : '');
+    }
+  }, [timeSlots, selectedTimeSlot]);
+
+  const buildAppointmentStart = (): Date => {
+    const mins = parseHour(selectedTimeSlot) ?? 0;
+    const [y, mo, d] = activeDateObj.isoDate.split('-').map((p) => parseInt(p, 10));
+    return new Date(y, mo - 1, d, Math.floor(mins / 60), mins % 60, 0, 0);
+  };
 
   const handleReviewBooking = () => {
     setStep(2);
   };
 
-  const handlePayment = () => {
-    // Confirm booking seamlessly
-    onConfirmBooking({
-      salon,
-      services: selectedServices,
-      totalAmount: totalPrice,
-      dateStr: activeDateObj.fullDate,
-      timeSlot: selectedTimeSlot,
-      staffName: selectedStaff?.name,
-      status: 'CONFIRMED',
-    });
+  const handlePayment = async () => {
+    if (isSubmitting) return;
+    setSubmitError(null);
+    if (!selectedTimeSlot) {
+      setSubmitError('Please pick an available time slot.');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      await onConfirmBooking({
+        salon,
+        services: selectedServices,
+        totalAmount: totalPrice,
+        dateStr: activeDateObj.fullDate,
+        timeSlot: selectedTimeSlot,
+        appointmentStart: buildAppointmentStart(),
+        staffName: selectedStaff?.name,
+        customerNote: customerNote,
+      });
+    } catch (err: any) {
+      setSubmitError(err?.message || 'Booking could not be completed. Please try again.');
+      setStep(1);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (step === 2) {
@@ -116,40 +149,15 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
         timeSlot={selectedTimeSlot}
         onConfirm={handlePayment}
         onBack={() => setStep(1)}
+        isProcessing={isSubmitting}
+        submitError={submitError}
       />
     );
   }
 
   return (
     <div className="flex flex-col w-full max-w-md mx-auto relative min-h-screen bg-[#fff8f8] pb-48">
-      {/* Waitlist Modal */}
-      <WaitlistModal
-        isOpen={isWaitlistModalOpen}
-        onClose={() => setIsWaitlistModalOpen(false)}
-        salon={salon}
-        timeSlot={waitlistSlot}
-        dateStr={activeDateObj.fullDate}
-        selectedServicesSummary={selectedServices.map((s) => s.name).join(', ')}
-        onJoinSuccess={handleWaitlistSuccess}
-      />
 
-      {/* Waitlist Toast */}
-      {waitlistJoinedToast && (
-        <div className="fixed top-18 inset-x-4 z-50 bg-[#26181c] text-white p-3.5 rounded-2xl shadow-2xl border-2 border-amber-400 flex items-center justify-between gap-3 animate-in slide-in-from-top max-w-md mx-auto">
-          <div className="flex items-center gap-2.5">
-            <span className="material-symbols-outlined text-amber-400 text-[22px] shrink-0">
-              notifications_active
-            </span>
-            <p className="text-xs font-semibold">{waitlistJoinedToast}</p>
-          </div>
-          <button
-            onClick={() => setWaitlistJoinedToast(null)}
-            className="text-slate-400 hover:text-white p-1 cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[18px]">close</span>
-          </button>
-        </div>
-      )}
 
       {/* Fixed Top Header */}
       <header className="fixed top-0 inset-x-0 z-50 bg-white/80 backdrop-blur-2xl border-b border-[#e8e8e8]/50 pt-safe max-w-md mx-auto">
@@ -190,19 +198,20 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
 
         {/* Month Header */}
         <div className="px-5 py-4 flex justify-between items-center bg-[#fff8f8]">
-          <h2 className="text-[18px] font-bold text-[#26181c]">{currentMonthYear}</h2>
+          <h2 className="text-[18px] font-bold text-[#26181c]">{activeDateObj.monthYear}</h2>
           <div className="flex gap-2">
             <button
-              onClick={() => setCurrentMonthYear('June 2024')}
-              className="w-8 h-8 rounded-full flex items-center justify-center bg-[#ffe8ed] text-[#26181c] hover:bg-[#f6dce2] transition-colors"
-              aria-label="Previous Month"
+              onClick={() => { if (weekOffset > 0) { setWeekOffset(weekOffset - 1); setSelectedDateIdx(0); } }}
+              disabled={weekOffset === 0}
+              className={`w-8 h-8 rounded-full flex items-center justify-center bg-[#ffe8ed] text-[#26181c] transition-colors ${weekOffset === 0 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[#f6dce2]'}`}
+              aria-label="Previous week"
             >
               <span className="material-symbols-outlined text-[20px]">chevron_left</span>
             </button>
             <button
-              onClick={() => setCurrentMonthYear('August 2024')}
+              onClick={() => { setWeekOffset(weekOffset + 1); setSelectedDateIdx(0); }}
               className="w-8 h-8 rounded-full flex items-center justify-center bg-[#ffe8ed] text-[#26181c] hover:bg-[#f6dce2] transition-colors"
-              aria-label="Next Month"
+              aria-label="Next week"
             >
               <span className="material-symbols-outlined text-[20px]">chevron_right</span>
             </button>
@@ -214,18 +223,6 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
           <div className="flex gap-3 w-max">
             {dateOptions.map((item, idx) => {
               const isSelected = selectedDateIdx === idx;
-              if (!item.isAvailable) {
-                return (
-                  <button
-                    key={idx}
-                    disabled
-                    className="flex flex-col items-center justify-center w-16 h-20 rounded-2xl bg-[#ffe8ed]/40 text-[#26181c]/30 cursor-not-allowed"
-                  >
-                    <span className="text-[11px] uppercase tracking-wider font-medium">{item.dayName}</span>
-                    <span className="text-[20px] font-bold mt-1">{item.dateNum}</span>
-                  </button>
-                );
-              }
 
               return (
                 <button
@@ -262,14 +259,10 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
                     <button
                       key={slot.time}
                       type="button"
-                      onClick={() => handleOpenWaitlist(slot.time)}
-                      className="h-12 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-bold text-[11px] flex flex-col items-center justify-center cursor-pointer transition-all active:scale-95 shadow-2xs group"
+                      disabled
+                      className="h-12 rounded-xl bg-[#ffe8ed]/40 text-[#26181c]/30 font-medium text-[11px] flex items-center justify-center cursor-not-allowed"
                     >
-                      <span className="line-through opacity-60 text-[10px]">{slot.time}</span>
-                      <span className="flex items-center gap-0.5 text-amber-700 group-hover:text-amber-900 font-extrabold text-[10px]">
-                        <span className="material-symbols-outlined text-[12px]">notifications_active</span>
-                        Waitlist
-                      </span>
+                      <span className="line-through">{slot.time}</span>
                     </button>
                   );
                 }
@@ -303,14 +296,10 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
                     <button
                       key={slot.time}
                       type="button"
-                      onClick={() => handleOpenWaitlist(slot.time)}
-                      className="h-12 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-bold text-[11px] flex flex-col items-center justify-center cursor-pointer transition-all active:scale-95 shadow-2xs group"
+                      disabled
+                      className="h-12 rounded-xl bg-[#ffe8ed]/40 text-[#26181c]/30 font-medium text-[11px] flex items-center justify-center cursor-not-allowed"
                     >
-                      <span className="line-through opacity-60 text-[10px]">{slot.time}</span>
-                      <span className="flex items-center gap-0.5 text-amber-700 group-hover:text-amber-900 font-extrabold text-[10px]">
-                        <span className="material-symbols-outlined text-[12px]">notifications_active</span>
-                        Waitlist
-                      </span>
+                      <span className="line-through">{slot.time}</span>
                     </button>
                   );
                 }
@@ -339,6 +328,18 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
             <div className="grid grid-cols-3 gap-3">
               {timeSlots.evening.map((slot) => {
                 const isSelected = selectedTimeSlot === slot.time;
+                if (slot.disabled) {
+                  return (
+                    <button
+                      key={slot.time}
+                      type="button"
+                      disabled
+                      className="h-12 rounded-xl bg-[#ffe8ed]/40 text-[#26181c]/30 font-medium text-[11px] flex items-center justify-center cursor-not-allowed"
+                    >
+                      <span className="line-through">{slot.time}</span>
+                    </button>
+                  );
+                }
                 return (
                   <button
                     key={slot.time}
@@ -357,6 +358,18 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
           </div>
         </div>
       </main>
+
+      {/* Customer note (optional) — sent as p_customer_note with the booking */}
+      <div className="px-5 pb-44 -mt-2">
+        <label className="text-[13px] font-semibold text-[#5a3f47] block mb-1.5">Note for the salon (optional)</label>
+        <textarea
+          value={customerNote}
+          onChange={(e) => setCustomerNote(e.target.value)}
+          rows={2}
+          placeholder="Anything the salon should know before your visit"
+          className="w-full rounded-xl border border-[#f0d8e2] bg-white px-3 py-2.5 text-[13px] text-[#26181c] placeholder:text-[#8c7077] focus:outline-none focus:ring-2 focus:ring-[#e6007e]/30"
+        />
+      </div>
 
       {/* Sticky Bottom Summary Bar */}
       <div className="fixed bottom-0 left-0 right-0 pt-5 pb-8 p-5 bg-white/95 backdrop-blur-3xl shadow-[0_-12px_40px_rgba(0,0,0,0.08)] pb-safe z-40 max-w-md mx-auto border-t border-[#e8e8e8] mb-safe">
@@ -378,6 +391,10 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
             <p className="text-[18px] text-[#e6007e] font-bold">₹{totalPrice}</p>
           </div>
         </div>
+
+        {submitError && (
+          <p className="text-[12px] font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{submitError}</p>
+        )}
 
         <button
           onClick={handleReviewBooking}

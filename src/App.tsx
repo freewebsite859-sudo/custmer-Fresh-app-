@@ -7,6 +7,7 @@ import {
   INITIAL_LOCATION,
 } from './data/mockData';
 import { fetchPublicSalons } from './lib/salonRepository';
+import { createCustomerBooking, createAdvanceOrder, loadRazorpayCheckout, openRazorpayAdvanceCheckout } from './lib/bookingRepository';
 
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
@@ -602,63 +603,55 @@ export default function App() {
     });
   };
 
-  const handleConfirmBooking = (bookingData: {
+  const handleConfirmBooking = async (bookingData: {
     salon: Salon;
     services: Service[];
     totalAmount: number;
     dateStr: string;
     timeSlot: string;
+    appointmentStart: Date;
     staffName?: string;
-    status?: 'CONFIRMED' | 'payment_pending';
-    bookingId?: string;
-  }, onSuccess?: () => void) => {
-    const status = bookingData.status || 'CONFIRMED';
-    
-    if (bookingData.bookingId) {
-       // Update existing
-       const existingBooking = bookings.find(b => b.id === bookingData.bookingId);
-       if (!existingBooking) return;
-       
-       const updatedBooking = { ...existingBooking, status: status };
-       setBookings((prev) => prev.map(b => b.id === bookingData.bookingId ? updatedBooking : b));
-       
-       if (status === 'CONFIRMED') {
-          setConfirmedModalBooking(updatedBooking);
-          setTimeout(() => {
-            if (updatedBooking) triggerPushNotificationForBooking(updatedBooking.id);
-          }, 1500);
-          if (onSuccess) onSuccess();
-       }
-       return updatedBooking;
+    customerNote?: string;
+  }): Promise<Booking> => {
+    if (!supabase) {
+      throw new Error('Booking is unavailable because the app is not configured.');
+    }
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session?.access_token) {
+      throw new Error('Your customer session expired. Please log in again to continue booking.');
     }
 
+    // Real pipeline (mirrors main-website, already live in production):
+    //   1) create booking via audited RPC (server validates role/salon/services)
+    const bookingId = await createCustomerBooking(supabase, {
+      salonId: bookingData.salon.id,
+      serviceIds: bookingData.services.map((s) => s.id),
+      staffId: null,
+      appointmentStart: bookingData.appointmentStart,
+      customerNote: bookingData.customerNote,
+    });
+    //   2) secure advance order — amount is computed SERVER-side (25%)
+    const order = await createAdvanceOrder(supabase, session.access_token, bookingId);
+    //   3) open the real Razorpay checkout window
+    await loadRazorpayCheckout();
+    openRazorpayAdvanceCheckout(order, session.user?.email ?? '');
+
     const newBooking: Booking = {
-      id: `NX-${Math.floor(1000 + Math.random() * 9000)}`,
+      id: bookingId,
       salonId: bookingData.salon.id,
       salonName: bookingData.salon.name,
       services: bookingData.services,
       totalAmount: bookingData.totalAmount,
       dateStr: bookingData.dateStr,
       timeSlot: bookingData.timeSlot,
-      status: status,
+      status: 'payment_pending',
       staffName: bookingData.staffName,
       locationArea: bookingData.salon.area,
       createdTime: Date.now(),
     };
 
     setBookings((prev) => [newBooking, ...prev]);
-
-    if (status === 'CONFIRMED') {
-      setConfirmedModalBooking(newBooking);
-
-      // Auto-schedule preview push notification for new booking after 1.5 seconds
-      setTimeout(() => {
-        triggerPushNotificationForBooking(newBooking.id);
-      }, 1500);
-      if (onSuccess) onSuccess();
-      setCurrentScreen('home');
-    }
-    
+    setCurrentScreen('bookings');
     return newBooking;
   };
 

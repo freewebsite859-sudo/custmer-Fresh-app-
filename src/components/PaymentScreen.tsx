@@ -11,6 +11,8 @@ interface PaymentScreenProps {
   timeSlot: string;
   onConfirm: () => void;
   onBack: () => void;
+  isProcessing?: boolean;
+  submitError?: string | null;
 }
 
 export const PaymentScreen: React.FC<PaymentScreenProps> = ({
@@ -21,10 +23,11 @@ export const PaymentScreen: React.FC<PaymentScreenProps> = ({
   dateStr,
   timeSlot,
   onConfirm,
-  onBack
+  onBack,
+  isProcessing = false,
+  submitError = null,
 }) => {
   const [termsAccepted, setTermsAccepted] = useState(false);
-  const [paymentStep, setPaymentStep] = useState<'summary' | 'qr' | 'processing' | 'success'>('summary');
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -32,60 +35,16 @@ export const PaymentScreen: React.FC<PaymentScreenProps> = ({
     return () => clearTimeout(timer);
   }, []);
 
-  const taxes = 50; // Mock taxes
-  const finalTotal = totalPrice + taxes;
+  // No invented taxes/fees — payable total is the sum of real service prices;
+  // the exact 25% advance is computed SERVER-side and shown in the Razorpay window.
+  const finalTotal = totalPrice;
   const advanceAmount = Math.round(finalTotal * 0.25);
   const remainingAmount = finalTotal - advanceAmount;
 
   const handlePayAndConfirm = () => {
-    if (!termsAccepted) return;
-    setPaymentStep('qr');
+    if (!termsAccepted || isProcessing) return;
+    onConfirm();
   };
-
-  const simulatePayment = () => {
-    setPaymentStep('processing');
-    setTimeout(() => {
-        setPaymentStep('success');
-        setTimeout(() => {
-            onConfirm();
-            // Reset step for potential future re-renders
-            setPaymentStep('summary');
-        }, 1500);
-    }, 2000);
-  };
-
-  if (paymentStep === 'qr') {
-      return (
-          <div className="flex flex-col items-center justify-center min-h-screen p-5 bg-white gap-6">
-              <h2 className="text-[20px] font-bold text-[#26181c]">Scan QR to Pay ₹{advanceAmount}</h2>
-              <div className="w-64 h-64 bg-slate-100 rounded-xl flex items-center justify-center border-2 border-dashed border-slate-300">
-                  <span className="material-symbols-outlined text-[64px] text-slate-400">qr_code_2</span>
-              </div>
-              <button onClick={simulatePayment} className="w-full h-[52px] bg-[#e6007e] text-white rounded-xl font-semibold">
-                  I have paid via QR
-              </button>
-          </div>
-      );
-  }
-
-  if (paymentStep === 'processing') {
-      return (
-          <div className="flex flex-col items-center justify-center min-h-screen p-5 bg-white">
-              <span className="material-symbols-outlined text-[48px] text-[#e6007e] animate-spin">refresh</span>
-              <p className="text-[16px] font-medium text-[#26181c] mt-4">Verifying payment...</p>
-          </div>
-      );
-  }
-
-  if (paymentStep === 'success') {
-      return (
-          <div className="flex flex-col items-center justify-center min-h-screen p-5 bg-white">
-              <span className="material-symbols-outlined text-[48px] text-emerald-500">check_circle</span>
-              <p className="text-[16px] font-medium text-[#26181c] mt-4">Payment Successful!</p>
-          </div>
-      );
-  }
-
   return (
     <div className="flex flex-col w-full relative min-h-screen bg-[#fff8f8]">
       {/* Fixed Top Header */}
@@ -171,6 +130,7 @@ export const PaymentScreen: React.FC<PaymentScreenProps> = ({
                 <span className="text-[16px]">Pay Now — 25% Advance</span>
                 <span className="text-[16px]">₹{advanceAmount}</span>
               </div>
+              <p className="text-[11px] text-[#8c7077]">Exact payable amount is confirmed by the secure Razorpay window.</p>
               <div className="flex justify-between items-center text-[#5a3f47]">
                 <span className="text-[16px]">Pay After Service — 75%</span>
                 <span className="text-[16px]">₹{remainingAmount}</span>
@@ -195,13 +155,16 @@ export const PaymentScreen: React.FC<PaymentScreenProps> = ({
 
             {/* Payment Button (Active State) */}
             <div className="flex flex-col gap-2 mt-2">
+              {submitError && (
+                <p className="text-[12px] font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{submitError}</p>
+              )}
               <button 
                 onClick={handlePayAndConfirm}
-                disabled={!termsAccepted}
-                className={`w-full h-[52px] rounded-xl font-semibold text-[18px] flex items-center justify-center gap-2 transition-transform shadow-lg ${termsAccepted ? 'bg-[#e6007e] text-white shadow-[#e6007e]/20 active:scale-[0.98]' : 'bg-[#e0bec6] text-[#5a3f47] cursor-not-allowed shadow-none'}`}
+                disabled={!termsAccepted || isProcessing}
+                className={`w-full h-[52px] rounded-xl font-semibold text-[18px] flex items-center justify-center gap-2 transition-transform shadow-lg ${!termsAccepted || isProcessing ? 'bg-[#e0bec6] text-[#5a3f47] cursor-not-allowed shadow-none' : 'bg-[#e6007e] text-white shadow-[#e6007e]/20 active:scale-[0.98]'}`}
               >
                 <span className="material-symbols-outlined text-[20px]">lock</span>
-                Pay ₹{advanceAmount} & Confirm Booking
+                {isProcessing ? 'Opening secure payment…' : `Pay ₹${advanceAmount} Advance & Book`}
               </button>
               <div className="flex items-center justify-center gap-1.5 mt-1 opacity-70">
                 <span className="material-symbols-outlined text-[14px] text-[#5a3f47]">verified_user</span>
@@ -223,11 +186,11 @@ export const PaymentScreen: React.FC<PaymentScreenProps> = ({
             </div>
             <button 
               onClick={handlePayAndConfirm}
-              disabled={!termsAccepted}
-              className={`w-full h-[52px] rounded-xl font-semibold text-[18px] flex items-center justify-center gap-2 transition-transform shadow-lg ${termsAccepted ? 'bg-[#e6007e] text-white shadow-[#e6007e]/20 active:scale-[0.98]' : 'bg-[#e0bec6] text-[#5a3f47] cursor-not-allowed shadow-none'}`}
+              disabled={!termsAccepted || isProcessing}
+              className={`w-full h-[52px] rounded-xl font-semibold text-[18px] flex items-center justify-center gap-2 transition-transform shadow-lg ${!termsAccepted || isProcessing ? 'bg-[#e0bec6] text-[#5a3f47] cursor-not-allowed shadow-none' : 'bg-[#e6007e] text-white shadow-[#e6007e]/20 active:scale-[0.98]'}`}
             >
               <span className="material-symbols-outlined text-[20px]">lock</span>
-              Pay ₹{advanceAmount} & Confirm Booking
+              {isProcessing ? 'Opening secure payment…' : `Pay ₹${advanceAmount} Advance & Book`}
             </button>
           </div>
         </footer>
