@@ -6,7 +6,14 @@ import {
   INITIAL_LOCATION,
 } from './data/mockData';
 import { fetchPublicSalons } from './lib/salonRepository';
-import { createCustomerBooking, createAdvanceOrder, loadRazorpayCheckout, openRazorpayAdvanceCheckout } from './lib/bookingRepository';
+import { createCustomerBooking, createAdvanceOrder, loadRazorpayCheckout, openRazorpayAdvanceCheckout, listCustomerBookings, subscribeToCustomerBookings, CustomerBookingRow } from './lib/bookingRepository';
+import { loadProfile, updateProfile, uploadAvatar, avatarUrlWithVersion, subscribeToProfile, CustomerProfile, ProfilePatch } from './lib/profileRepository';
+import { loadFavorites, setFavorite, subscribeToFavorites } from './lib/favoritesRepository';
+import { loadSettings, saveSettings, settingsFromLegacyLocalStorage, SETTINGS_DEFAULTS } from './lib/settingsRepository';
+import { loadAddresses, importLegacyAddresses } from './lib/addressesRepository';
+import { loadPaymentMethods, importLegacyPaymentMethods, addUpiMethod } from './lib/paymentMethodsRepository';
+import { loadServerNotifications, subscribeToServerNotifications } from './lib/serverNotifications';
+import { purgeLegacyLocalStorage, readLegacyJson, readLegacyValue, LEGACY_MIGRATION_FLAG } from './lib/legacyLocalData';
 import { PaymentStatusTracker } from './components/PaymentStatusTracker';
 
 import { Header } from './components/Header';
@@ -41,134 +48,10 @@ import { LegalScreen } from './components/LegalScreen';
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profile, setProfile] = useState<CustomerProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authScreen, setAuthScreen] = useState<'login' | 'signup' | 'role-conflict'>('login');
   const [conflictRole, setConflictRole] = useState<string | null>(null);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    if (!supabase) {
-      setAuthLoading(false);
-      return () => {
-        isMounted = false;
-      };
-    }
-
-    const client = supabase;
-
-    const fetchProfile = async (userId: string) => {
-      const { data, error } = await client
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-      
-      if (error) {
-        console.error('Error fetching profile:', error);
-        return null;
-      }
-      return data as UserProfile;
-    };
-
-    const applySession = async (session: { user?: any } | null) => {
-      if (!isMounted) return;
-      const authUser = session?.user ?? null;
-      if (!authUser) {
-        setUser(null);
-        setProfile(null);
-        setAuthLoading(false);
-        return;
-      }
-
-      let userProfile = await fetchProfile(authUser.id);
-      
-      // Retry logic for brand new signups
-      if (!userProfile) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        userProfile = await fetchProfile(authUser.id);
-      }
-
-      if (!isMounted) return;
-
-      if (userProfile && userProfile.is_active) {
-        const allowedRoles = ['customer', 'business_user', 'growth_partner'];
-        if (allowedRoles.includes(userProfile.platform_role)) {
-          setConflictRole(null);
-          setUser({ ...authUser, role: userProfile.platform_role });
-          setProfile(userProfile);
-          
-          if (userProfile.platform_role === 'business_user') setCurrentScreen('owner-dashboard');
-          else if (userProfile.platform_role === 'growth_partner') setCurrentScreen('gp-dashboard');
-        } else {
-          setUser(null);
-          setProfile(null);
-          setConflictRole(userProfile.platform_role);
-          setAuthScreen('role-conflict');
-          await client.auth.signOut();
-        }
-      } else if (userProfile && !userProfile.is_active) {
-        setUser(null);
-        setProfile(null);
-        setConflictRole('inactive');
-        setAuthScreen('role-conflict');
-        await client.auth.signOut();
-      } else {
-        // No profile found even after retry
-        setUser(null);
-        setProfile(null);
-        setAuthLoading(false);
-        return;
-      }
-      setAuthLoading(false);
-    };
-
-    try {
-      client.auth.getSession()
-        .then(({ data, error }) => {
-          if (isMounted) {
-            if (error) {
-              setUser(null);
-              setAuthLoading(false);
-              return;
-            }
-            void applySession(data?.session ?? null);
-          }
-        });
-
-      const { data: authListener } = client.auth.onAuthStateChange((_event, session) => {
-        if (isMounted) {
-          void applySession(session);
-        }
-      });
-
-      // Realtime subscription for profile changes
-      const profileSubscription = client
-        .channel('public:profiles')
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'profiles' },
-          (payload) => {
-            if (isMounted && user && payload.new.id === user.id) {
-              setProfile(payload.new as UserProfile);
-            }
-          }
-        )
-        .subscribe();
-
-      return () => {
-        isMounted = false;
-        authListener?.subscription?.unsubscribe();
-        profileSubscription.unsubscribe();
-      };
-    } catch (e) {
-      console.warn('Supabase init notice:', e);
-      if (isMounted) {
-        setAuthLoading(false);
-      }
-    }
-  }, [user?.id]);
 
   const [screenStack, setScreenStack] = useState<Screen[]>(['home']);
   const currentScreen = screenStack[screenStack.length - 1];
@@ -187,6 +70,98 @@ export default function App() {
   const handleBack = () => {
     setScreenStack(prev => (prev.length > 1 ? prev.slice(0, -1) : ['home']));
   };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    if (!supabase) {
+      setAuthLoading(false);
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    const client = supabase;
+
+    const verifyPlatformAccess = async (
+      authUser: { id: string }
+    ): Promise<{ allowed: boolean; role: string | null }> => {
+      const prof = await loadProfile(client, authUser.id);
+      if (!prof) return { allowed: false, role: null };
+      
+      const allowedRoles = ['customer', 'business_user', 'growth_partner'];
+      if (prof.is_active === true && allowedRoles.includes(prof.platform_role || '')) {
+        return { allowed: true, role: prof.platform_role };
+      }
+      return { allowed: false, role: prof.platform_role || 'inactive' };
+    };
+
+    const applySession = async (session: { user?: any } | null) => {
+      if (!isMounted) return;
+      const authUser = session?.user ?? null;
+      if (!authUser) {
+        setUser(null);
+        setProfile(null);
+        setAuthLoading(false);
+        return;
+      }
+
+      const { allowed, role } = await verifyPlatformAccess(authUser);
+      if (!isMounted) return;
+
+      if (allowed) {
+        setConflictRole(null);
+        setUser({ ...authUser, role });
+        // Profile will be hydrated by the bootstrap useEffect.
+        if (role === 'business_user') setCurrentScreen('owner-dashboard');
+        else if (role === 'growth_partner') setCurrentScreen('gp-dashboard');
+      } else {
+        setUser(null);
+        setProfile(null);
+        setConflictRole(role);
+        setAuthScreen('role-conflict');
+        await client.auth.signOut();
+      }
+      setAuthLoading(false);
+    };
+
+    try {
+      client.auth.getSession()
+        .then(({ data, error }) => {
+          if (isMounted) {
+            if (error) {
+              setUser(null);
+              setAuthLoading(false);
+              return;
+            }
+            void applySession(data?.session ?? null);
+          }
+        })
+        .catch((err) => {
+          console.warn('Supabase auth notice:', err?.message || err);
+          if (isMounted) {
+            setUser(null);
+            setAuthLoading(false);
+          }
+        });
+
+      const { data } = client.auth.onAuthStateChange((_event, session) => {
+        if (isMounted) {
+          void applySession(session);
+        }
+      });
+
+      return () => {
+        isMounted = false;
+        data?.subscription?.unsubscribe();
+      };
+    } catch (e) {
+      console.warn('Supabase init notice:', e);
+      if (isMounted) {
+        setAuthLoading(false);
+      }
+    }
+  }, []);
 
   const [isAppointmentDismissed, setIsAppointmentDismissed] = useState(false);
   // Live payment tracking watch (active Razorpay advance flow for a booking).
@@ -238,148 +213,300 @@ export default function App() {
     return INITIAL_LOCATION;
   });
 
+  // Favourites + profile + bookings come from Supabase (single source of
+  // truth). They hydrate after login and stay live via Realtime channels.
   const [favorites, setFavorites] = useState<string[]>([]);
-
-  useEffect(() => {
-    if (!supabase || !user) {
-      setFavorites([]);
-      return;
-    }
-
-    const fetchFavorites = async () => {
-      const { data, error } = await supabase
-        .from('favorites')
-        .select('salon_id')
-        .eq('user_id', user.id);
-      
-      if (error) {
-        console.error('Error fetching favorites:', error);
-      } else {
-        setFavorites(data?.map((f: any) => f.salon_id) || []);
-      }
-    };
-
-    fetchFavorites();
-
-    const favSub = supabase
-      .channel('public:favorites')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'favorites', filter: `user_id=eq.${user.id}` },
-        () => fetchFavorites()
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(favSub);
-    };
-  }, [user?.id]);
-
-  const handleToggleFavorite = async (salonId: string) => {
-    if (!supabase || !user) return;
-
-    const isFav = favorites.includes(salonId);
-
-    if (isFav) {
-      // Optimistic update
-      setFavorites(prev => prev.filter(id => id !== salonId));
-      await supabase
-        .from('favorites')
-        .delete()
-        .eq('user_id', user.id)
-        .eq('salon_id', salonId);
-    } else {
-      // Optimistic update
-      setFavorites(prev => [...prev, salonId]);
-      await supabase
-        .from('favorites')
-        .insert({ user_id: user.id, salon_id: salonId });
-    }
-  };
+  const [favoriteServiceIds, setFavoriteServiceIds] = useState<string[]>([]);
+  const [favoriteStaffIds, setFavoriteStaffIds] = useState<string[]>([]);
 
   const [recentlyViewed, setRecentlyViewed] = useState<string[]>([]);
 
   useEffect(() => {
     if (profile) {
-      setRecentlyViewed((profile as any).recently_viewed || []);
+       setRecentlyViewed((profile as any).recently_viewed || []);
     }
   }, [profile?.updated_at]);
 
-  const [favoriteProfessionals, setFavoriteProfessionals] = useState<SavedProfessional[]>([]);
-  const [favoriteServices, setFavoriteServices] = useState<SavedService[]>([]);
-  const [bookings, setBookings] = useState<Booking[]>([]);
-
-  useEffect(() => {
-    if (!supabase || !user) {
-      setBookings([]);
-      return;
-    }
-
-    const fetchBookings = async () => {
-      // In a real app, you'd fetch from a 'bookings' table. 
-      // The current app uses RPC to create them. 
-      // I'll assume a 'bookings' table exists for syncing.
-      const { data, error } = await supabase
-        .from('bookings')
-        .select('*')
-        .eq('customer_id', user.id)
-        .order('created_at', { ascending: false });
-      
-      if (!error && data) {
-        // Map DB rows to UI Booking type
-        setBookings(data.map((b: any) => ({
-           id: b.id,
-           salonId: b.salon_id,
-           salonName: b.salon_name,
-           services: b.services || [],
-           totalAmount: b.total_amount_paise / 100,
-           dateStr: b.date_str,
-           timeSlot: b.time_slot,
-           status: b.status,
-           staffName: b.staff_name,
-           locationArea: b.location_area,
-           createdTime: new Date(b.created_at).getTime()
-        })));
-      }
-    };
-
-    fetchBookings();
-
-    const bookingsSub = supabase
-      .channel('public:bookings')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'bookings', filter: `customer_id=eq.${user.id}` },
-        () => fetchBookings()
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(bookingsSub);
-    };
-  }, [user?.id]);
-
-  const [confirmedModalBooking, setConfirmedModalBooking] = useState<Booking | null>(null);
-  const [initialBookingIdForBookings, setInitialBookingIdForBookings] = useState<string | undefined>(undefined);
-
-  // Notification States
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    const saved = localStorage.getItem('nexora_notifications');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse notifications:', e);
+  // Resolved against the live salon catalogue before rendering.
+  const favoriteProfessionals: SavedProfessional[] = favoriteStaffIds.flatMap((staffId) => {
+    for (const salon of salons) {
+      const staffMember = salon.staff.find((s) => s.id === staffId);
+      if (staffMember) {
+        return [{
+          id: staffMember.id,
+          salonId: salon.id,
+          name: staffMember.name,
+          role: staffMember.role,
+          rating: staffMember.rating,
+          avatar: staffMember.avatar,
+          salonName: salon.name,
+          skills: [],
+        }];
       }
     }
     return [];
   });
 
+  const favoriteServices: SavedService[] = favoriteServiceIds.flatMap((serviceId) => {
+    for (const salon of salons) {
+      const service = salon.services.find((s) => s.id === serviceId);
+      if (service) {
+        return [{
+          id: service.id,
+          salonId: salon.id,
+          name: service.name,
+          durationMinutes: service.durationMinutes,
+          price: service.price,
+          salonName: salon.name,
+          category: service.category,
+        }];
+      }
+    }
+    return [];
+  });
+
+  // Server bookings are the authority. localOnlyBookings only bridges the
+  // instant between creating a booking and the next server refresh.
+  const [serverBookingRows, setServerBookingRows] = useState<CustomerBookingRow[]>([]);
+  const [serverBookingItems, setServerBookingItems] = useState<Record<string, string[]>>({});
+  const [localOnlyBookings, setLocalOnlyBookings] = useState<Booking[]>([]);
+  const [reviewedBookingIds, setReviewedBookingIds] = useState<string[]>([]);
+
+  const mapServerStatus = (status: string | null): Booking['status'] => {
+    const s = (status ?? '').toLowerCase();
+    if (s.includes('cancel') || s.includes('no_show') || s.includes('noshow')) return 'CANCELLED';
+    if (s.includes('complete') || s === 'done' || s.includes('served')) return 'COMPLETED';
+    if (s.includes('confirm') || s.includes('paid') || s.includes('success') || s.includes('capture')) return 'CONFIRMED';
+    if (s.includes('payment_pending') || s.includes('await') || s.includes('unpaid')) return 'payment_pending';
+    return 'PENDING';
+  };
+
+  const bookings: Booking[] = (() => {
+    const mapped: Booking[] = serverBookingRows.map((row) => {
+      const salon = salons.find((s) => s.id === row.salon_id);
+      const serviceIds = serverBookingItems[row.id] ?? [];
+      const services: Service[] = serviceIds.map((serviceId) => {
+        const found = salon?.services.find((s) => s.id === serviceId);
+        return found ?? { id: serviceId, name: 'Salon service', durationMinutes: 0, price: 0, category: '' };
+      });
+      const start = row.appointment_start ? new Date(row.appointment_start) : null;
+      const validStart = start && !Number.isNaN(start.valueOf()) ? start : null;
+      return {
+        id: row.id,
+        salonId: row.salon_id,
+        salonName: salon?.name ?? 'Salon',
+        services,
+        totalAmount: (row.total_paise ?? 0) / 100,
+        dateStr: validStart
+          ? validStart.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+          : '',
+        timeSlot: validStart
+          ? validStart.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+          : '',
+        status: mapServerStatus(row.status),
+        locationArea: salon?.area ?? '',
+        createdTime: row.created_at ? Date.parse(row.created_at) : Date.now(),
+        isReviewed: reviewedBookingIds.includes(row.id) || undefined,
+      };
+    });
+    const serverIds = new Set(mapped.map((b) => b.id));
+    const pending = localOnlyBookings
+      .filter((b) => !serverIds.has(b.id))
+      .map((b) => reviewedBookingIds.includes(b.id) ? { ...b, isReviewed: true } : b);
+    return [...pending, ...mapped];
+  })();
+
+  const setBookings = (updater: (prev: Booking[]) => Booking[]) => {
+    // Local-only mutations (e.g. cancel/review flags applied pre-refresh).
+    setLocalOnlyBookings((prevLocal) => {
+      const current = [...prevLocal];
+      return updater(current).filter((b) => !serverBookingRows.some((r) => r.id === b.id));
+    });
+  };
+
+  const [confirmedModalBooking, setConfirmedModalBooking] = useState<Booking | null>(null);
+  const [initialBookingIdForBookings, setInitialBookingIdForBookings] = useState<string | undefined>(undefined);
+
+  // Notifications: server rows hydrate after login; local entries are only
+  // ephemeral device notices (install/sync), never persisted as truth.
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+
   const [activePushOverlay, setActivePushOverlay] = useState<AppNotification | null>(null);
   const [isNotificationDrawerOpen, setIsNotificationDrawerOpen] = useState(false);
-  const [profileAvatar, setProfileAvatar] = useState<string>(() => {
-    return localStorage.getItem('profile_avatar') || '';
-  });
+
+  // ---- Server refresh helpers (used by bootstrap + realtime callbacks) ----
+  const refreshFavorites = React.useCallback(async () => {
+    if (!supabase || !user) return;
+    try {
+      const f = await loadFavorites(supabase, user.id);
+      setFavorites(f.salonIds);
+      setFavoriteServiceIds(f.serviceIds);
+      setFavoriteStaffIds(f.staffIds);
+    } catch (e: any) {
+      console.warn('Favourites sync notice:', e?.message || e);
+    }
+  }, [user?.id]);
+
+  const refreshBookings = React.useCallback(async () => {
+    if (!supabase || !user) return;
+    try {
+      const { bookings: rows, serviceIdsByBooking } = await listCustomerBookings(supabase, user.id);
+      setServerBookingRows(rows);
+      setServerBookingItems(serviceIdsByBooking);
+    } catch (e: any) {
+      console.warn('Bookings sync notice:', e?.message || e);
+    }
+  }, [user?.id]);
+
+  // ---- Unified bootstrap: hydrate profile/favourites/bookings/notifications,
+  //      run the one-time legacy-localStorage migration, then subscribe. ----
+  useEffect(() => {
+    if (!supabase || !user) return;
+    const client = supabase;
+    const uid: string = user.id;
+    let cancelled = false;
+    const unsubs: Array<() => void> = [];
+
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    (async () => {
+      try {
+        // 1) Hydrate profile (header avatar + profile screens)
+        let prof: CustomerProfile | null = null;
+        try { prof = await loadProfile(client, uid); } catch (e: any) { console.warn('Profile load notice:', e?.message || e); }
+        if (cancelled) return;
+        setProfile(prof);
+
+        // 2) One-time migrate-up of pre-unification localStorage values,
+        //    then purge the local copies (Supabase becomes the only truth).
+        const alreadyMigrated = readLegacyValue(LEGACY_MIGRATION_FLAG) === 'done';
+        if (!alreadyMigrated) {
+          try {
+            if (prof) {
+              // Import only genuinely user-entered values; never import the
+              // old fabricated persona defaults.
+              const patch: ProfilePatch = {};
+              const legacyName = readLegacyValue('profile_name');
+              if (!prof.full_name && legacyName && legacyName !== 'Customer') patch.full_name = legacyName;
+              const legacyPhone = readLegacyValue('profile_phone');
+              if (!prof.phone && legacyPhone && legacyPhone !== '+91 98765 43210') patch.phone = legacyPhone;
+              const legacyDob = readLegacyValue('profile_dob');
+              if (!prof.date_of_birth && legacyDob && legacyDob !== '1992-05-14') patch.date_of_birth = legacyDob;
+              const legacyGender = readLegacyValue('profile_gender');
+              if (!prof.gender && legacyGender) patch.gender = legacyGender;
+              const legacyCity = readLegacyValue('profile_city');
+              if (!prof.preferred_city && legacyCity) patch.preferred_city = legacyCity;
+              const legacyArea = readLegacyValue('profile_area');
+              if (!prof.preferred_area && legacyArea) patch.preferred_area = legacyArea;
+              if (Object.keys(patch).length > 0) {
+                prof = await updateProfile(client, uid, patch);
+                if (!cancelled) setProfile(prof);
+              }
+            }
+            // settings row
+            try {
+              const { exists } = await loadSettings(client, uid);
+              if (!exists) {
+                const legacy = settingsFromLegacyLocalStorage(readLegacyValue);
+                await saveSettings(client, uid, { ...SETTINGS_DEFAULTS, ...legacy });
+              }
+            } catch (e: any) { console.warn('Settings migration notice:', e?.message || e); }
+            // favourites
+            const legacySalonFavs = readLegacyJson<string[]>('nexora_favorites') ?? [];
+            const legacyProFavs = (readLegacyJson<Array<{ id: string }>>('nexora_favorite_pros') ?? []).map((p) => p?.id).filter(Boolean) as string[];
+            const legacyServiceFavs = (readLegacyJson<Array<{ id: string }>>('nexora_favorite_services') ?? []).map((s) => s?.id).filter(Boolean) as string[];
+            for (const id of legacySalonFavs.filter((x) => UUID_RE.test(x))) {
+              await setFavorite(client, uid, 'salon', id, true).catch(() => undefined);
+            }
+            for (const id of legacyProFavs.filter((x) => UUID_RE.test(x))) {
+              await setFavorite(client, uid, 'staff', id, true).catch(() => undefined);
+            }
+            for (const id of legacyServiceFavs.filter((x) => UUID_RE.test(x))) {
+              await setFavorite(client, uid, 'service', id, true).catch(() => undefined);
+            }
+            // addresses
+            try {
+              const serverAddrs = await loadAddresses(client, uid);
+              const legacyAddrs = readLegacyJson<Array<any>>('nexora_saved_addresses') ?? [];
+              const realAddrs = legacyAddrs.filter((a) => a && typeof a.id === 'string' && !a.id.startsWith('addr-'));
+              if (serverAddrs.length === 0 && realAddrs.length > 0) {
+                await importLegacyAddresses(client, uid, realAddrs);
+              }
+            } catch (e: any) { console.warn('Address migration notice:', e?.message || e); }
+            // payment methods
+            try {
+              const existing = await loadPaymentMethods(client, uid);
+              const legacyUpis = (readLegacyJson<Array<any>>('nexora_saved_upis') ?? []).filter((u) => u && typeof u.id === 'string' && !u.id.startsWith('upi-'));
+              const legacyCards = (readLegacyJson<Array<any>>('nexora_saved_cards') ?? []).filter((c) => c && typeof c.id === 'string' && !c.id.startsWith('card-'));
+              if (existing.upis.length === 0 && existing.cards.length === 0 && (legacyUpis.length || legacyCards.length)) {
+                await importLegacyPaymentMethods(client, uid, legacyUpis, legacyCards);
+              }
+            } catch (e: any) { console.warn('Payment-method migration notice:', e?.message || e); }
+          } catch (e: any) {
+            console.warn('Legacy migration notice:', e?.message || e);
+          }
+          try { localStorage.setItem(LEGACY_MIGRATION_FLAG, 'done'); } catch { /* storage unavailable */ }
+          purgeLegacyLocalStorage();
+        }
+
+        // 3) Hydrate favourites / bookings / notifications from the server
+        await Promise.all([refreshFavorites(), refreshBookings()]);
+        try {
+          const serverNotifs = await loadServerNotifications(client, uid);
+          if (!cancelled) {
+            setNotifications((prev) => {
+              const localEphemeral = prev.filter((n) => !n.id.startsWith('srv-'));
+              return [...serverNotifs, ...localEphemeral];
+            });
+          }
+        } catch (e: any) {
+          console.warn('Notifications sync notice:', e?.message || e);
+        }
+
+        // 4) Realtime subscriptions (task STEP 6)
+        if (!cancelled) {
+          unsubs.push(subscribeToProfile(client, uid, (p) => setProfile(p)));
+          unsubs.push(subscribeToFavorites(client, uid, refreshFavorites));
+          unsubs.push(subscribeToCustomerBookings(client, uid, refreshBookings));
+          unsubs.push(subscribeToServerNotifications(client, uid, (n) => {
+            setNotifications((prev) => [n, ...prev.filter((x) => x.id !== n.id)]);
+          }));
+        }
+      } catch (e: any) {
+        console.warn('Account bootstrap notice:', e?.message || e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubs.forEach((unsub) => unsub());
+    };
+  }, [user?.id, refreshFavorites, refreshBookings]);
+
+  // Profile write handlers shared with screens (UPDATE-only; task STEP 10)
+  const handleSaveProfile = React.useCallback(async (patch: ProfilePatch): Promise<boolean> => {
+    if (!supabase || !user) return false;
+    try {
+      const updated = await updateProfile(supabase, user.id, patch);
+      setProfile(updated);
+      return true;
+    } catch (e: any) {
+      console.warn('Profile save notice:', e?.message || e);
+      return false;
+    }
+  }, [user?.id]);
+
+  const handleUploadAvatar = React.useCallback(async (file: File): Promise<boolean> => {
+    if (!supabase || !user) return false;
+    try {
+      const updated = await uploadAvatar(supabase, user.id, file);
+      setProfile(updated);
+      return true;
+    } catch (e: any) {
+      console.warn('Avatar upload notice:', e?.message || e);
+      return false;
+    }
+  }, [user?.id]);
 
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -390,29 +517,9 @@ export default function App() {
       if (event.data.type === 'SYNC_COMPLETE') {
         console.log('Sync complete received from SW', event.data);
         setIsSyncing(false);
-        
-        // If data was passed from SW, use it to update state
-        if (event.data.data && Array.isArray(event.data.data)) {
-          setBookings(prev => {
-            const newBookings = [...prev];
-            event.data.data.forEach((newBk: Booking) => {
-              const idx = newBookings.findIndex(b => b.id === newBk.id);
-              if (idx > -1) {
-                newBookings[idx] = newBk;
-              } else {
-                newBookings.push(newBk);
-              }
-            });
-            return newBookings;
-          });
-        } else {
-          // Fallback: Refresh bookings from localStorage 
-          const saved = localStorage.getItem('nexora_bookings');
-          if (saved) {
-            setBookings(JSON.parse(saved));
-          }
-        }
-        
+        // sw.js no longer injects booking data; the server refresh is the truth.
+        void refreshBookings();
+
         // Show a temporary sync notification
         const syncNotif: AppNotification = {
           id: `sync-${Date.now()}`,
@@ -465,7 +572,7 @@ export default function App() {
       syncChannel.close();
       window.removeEventListener('online', handleOnline);
     };
-  }, []); // Use empty dependency or handle refreshes carefully
+  }, [refreshBookings]);
 
   // Global UPI QR Scanner States
   const [isGlobalScanQrOpen, setIsGlobalScanQrOpen] = useState(false);
@@ -488,13 +595,7 @@ export default function App() {
       localStorage.setItem('nexora_app_installed', 'true');
     }
 
-    // Auto-show popup if:
-    // 1. Not installed
-    // 2. Not in standalone mode
-    // 3. Not dismissed in current session
-    // 4. Not dismissed permanently via "Don't show again" checkbox
     if (!isAppInstalled && !isStandalone && !hasDismissedInSession && !isPwaDismissedPermanently) {
-      // Delay slightly for better UX (2 seconds)
       const timer = setTimeout(() => {
         setIsInstallModalOpen(true);
       }, 2000);
@@ -504,25 +605,14 @@ export default function App() {
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: any) => {
-      // Prevent the mini-infobar from appearing on mobile
       e.preventDefault();
-      // Stash the event so it can be triggered later.
       setDeferredPrompt(e);
-      console.log('beforeinstallprompt event was stashed');
     };
-
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-
     window.addEventListener('appinstalled', () => {
-      // Clear the deferredPrompt so it can be garbage collected
       setDeferredPrompt(null);
-      console.log('PWA was installed');
-      
-      // Mark as installed permanently
       setIsAppInstalled(true);
       localStorage.setItem('nexora_app_installed', 'true');
-      
-      // Show success notification
       const installNotif: AppNotification = {
         id: `install-${Date.now()}`,
         bookingId: '',
@@ -538,90 +628,52 @@ export default function App() {
       setNotifications(prev => [installNotif, ...prev]);
       setActivePushOverlay(installNotif);
     });
-
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     };
   }, []);
 
-  // Sync state to localStorage - REMOVED for unified database sync
-  /*
-  useEffect(() => {
-    localStorage.setItem('nexora_favorites', JSON.stringify(favorites));
-  }, [favorites]);
-
-  useEffect(() => {
-    localStorage.setItem('nexora_favorite_pros', JSON.stringify(favoriteProfessionals));
-  }, [favoriteProfessionals]);
-
-  useEffect(() => {
-    localStorage.setItem('nexora_favorite_services', JSON.stringify(favoriteServices));
-  }, [favoriteServices]);
-
-  useEffect(() => {
-    localStorage.setItem('nexora_bookings', JSON.stringify(bookings));
-  }, [bookings]);
-
   useEffect(() => {
     localStorage.setItem('nexora_user_location', JSON.stringify(userLocation));
   }, [userLocation]);
 
-  useEffect(() => {
-    localStorage.setItem('nexora_notifications', JSON.stringify(notifications));
-  }, [notifications]);
-  */
-
-  // Trigger push notification helper
-  const triggerPushNotificationForBooking = (targetBookingId?: string) => {
-    const targetBooking =
-      bookings.find((b) => b.id === targetBookingId) ||
-      bookings.find((b) => b.status === 'CONFIRMED' || b.status === 'PENDING') ||
-      bookings[0];
-
-    if (!targetBooking) return;
-
-    const newNotif: AppNotification = {
-      id: `notif-${Date.now()}`,
-      bookingId: targetBooking.id,
-      salonName: targetBooking.salonName,
-      timeSlot: targetBooking.timeSlot,
-      dateStr: targetBooking.dateStr,
-      servicesSummary: targetBooking.services.map((s) => s.name).join(', '),
-      timestamp: Date.now(),
-      read: false,
-      type: 'reminder_1h',
-      message: `Your appointment at ${targetBooking.salonName} starts in 1 hour (${targetBooking.timeSlot})!`,
-    };
-
-    setNotifications((prev) => [newNotif, ...prev]);
-    setActivePushOverlay(newNotif);
-
-    // Trigger Browser Push Notification if browser supports and permitted
-    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-      try {
-        new Notification(`⏰ 1-Hour Reminder: ${targetBooking.salonName}`, {
-          body: `Your appointment for ${newNotif.servicesSummary} starts in 1 hour at ${targetBooking.timeSlot}.`,
-          icon: '/icon.png',
-        });
-      } catch (e) {
-        console.warn('Native push notification error', e);
-      }
-    }
-  };
-
+  // Favourites: optimistic local toggle + Supabase write; Realtime keeps
+  // every logged-in device in sync (task STEPS 6/7).
   const handleToggleFavorite = (salonId: string) => {
+    const willFavorite = !favorites.includes(salonId);
     setFavorites((prev) =>
-      prev.includes(salonId) ? prev.filter((id) => id !== salonId) : [...prev, salonId]
+      willFavorite ? [...prev, salonId] : prev.filter((id) => id !== salonId)
     );
+    if (supabase && user) {
+      setFavorite(supabase, user.id, 'salon', salonId, willFavorite).catch((e) => {
+        console.warn('Favourite write notice:', e?.message || e);
+        // revert on failure
+        setFavorites((prev) =>
+          willFavorite ? prev.filter((id) => id !== salonId) : [...prev, salonId]
+        );
+      });
+    }
   };
 
-  const [recentlyViewed, setRecentlyViewed] = useState<string[]>([]);
-
-  useEffect(() => {
-    if (profile) {
-      setRecentlyViewed((profile as any).recently_viewed || []);
+  const handleRemoveFavoriteProfessional = (proId: string) => {
+    setFavoriteStaffIds((prev) => prev.filter((id) => id !== proId));
+    if (supabase && user) {
+      setFavorite(supabase, user.id, 'staff', proId, false).catch((e) => {
+        console.warn('Favourite write notice:', e?.message || e);
+        setFavoriteStaffIds((prev) => [...prev, proId]);
+      });
     }
-  }, [profile?.updated_at]);
+  };
+
+  const handleRemoveFavoriteService = (servId: string) => {
+    setFavoriteServiceIds((prev) => prev.filter((id) => id !== servId));
+    if (supabase && user) {
+      setFavorite(supabase, user.id, 'service', servId, false).catch((e) => {
+        console.warn('Favourite write notice:', e?.message || e);
+        setFavoriteServiceIds((prev) => [...prev, servId]);
+      });
+    }
+  };
 
   const handleSelectSalon = async (salon: Salon) => {
     setSelectedSalon(salon);
@@ -671,8 +723,6 @@ export default function App() {
       throw new Error('Your customer session expired. Please log in again to continue booking.');
     }
 
-    // Real pipeline (mirrors main-website, already live in production):
-    //   1) create booking via audited RPC (server validates role/salon/services)
     const bookingId = await createCustomerBooking(supabase, {
       salonId: bookingData.salon.id,
       serviceIds: bookingData.services.map((s) => s.id),
@@ -680,14 +730,9 @@ export default function App() {
       appointmentStart: bookingData.appointmentStart,
       customerNote: bookingData.customerNote,
     });
-    //   2) secure advance order — amount is computed SERVER-side (25%)
     const order = await createAdvanceOrder(supabase, session.access_token, bookingId);
-    //   3) open the real Razorpay checkout window (UPI apps / QR scan supported)
     await loadRazorpayCheckout();
     openRazorpayAdvanceCheckout(order, session.user?.email ?? '', {
-      // Razorpay fires this only after a successful payment — moves the
-      // tracker to the interim "received, confirming…" stage (NOT final confirm;
-      // the server/webhook stays the authority).
       onPaymentSuccess: () => {
         setPaymentWatch((prev) =>
           prev ? { ...prev, paymentSubmitted: true } : prev,
@@ -710,7 +755,7 @@ export default function App() {
     };
 
     setBookings((prev) => [newBooking, ...prev]);
-    // Start live in-app payment tracking for this booking (QR/UPI flow).
+    void refreshBookings();
     setPaymentWatch({
       bookingId: newBooking.id,
       salonName: newBooking.salonName,
@@ -720,13 +765,13 @@ export default function App() {
     return newBooking;
   };
 
-  // Called by PaymentStatusTracker ONLY when the bookings row itself proves payment.
   const handlePaymentProven = (bookingId: string) => {
     setBookings((prev) =>
       prev.map((b) =>
         b.id === bookingId ? { ...b, status: 'CONFIRMED' as Booking['status'] } : b,
       ),
     );
+    void refreshBookings();
   };
 
   const handleCancelBooking = (bookingId: string) => {
@@ -736,9 +781,7 @@ export default function App() {
   };
 
   const handleMarkBookingReviewed = (bookingId: string) => {
-    setBookings((prev) =>
-      prev.map((b) => (b.id === bookingId ? { ...b, isReviewed: true } : b))
-    );
+    setReviewedBookingIds((prev) => (prev.includes(bookingId) ? prev : [...prev, bookingId]));
   };
 
   const handleAddReviewFromBooking = (salonId: string, newRev: Omit<ServiceReview, 'id' | 'date'>) => {
@@ -763,7 +806,6 @@ export default function App() {
 
   const handleSnoozeNotification = (id: string) => {
     setActivePushOverlay(null);
-    // Re-trigger overlay after 10 seconds for testing/preview
     setTimeout(() => {
       const snoozedNotif = notifications.find((n) => n.id === id);
       if (snoozedNotif) {
@@ -775,7 +817,6 @@ export default function App() {
     }, 10000);
   };
 
-  // Screen Title helper
   const getHeaderTitle = (): string => {
     switch (currentScreen) {
       case 'home':
@@ -872,7 +913,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#fff8f8] text-[#26181c] font-['Inter',sans-serif] relative flex flex-col justify-between">
-      {/* Floating Interactive Push Notification Overlay */}
       <NotificationOverlay
         notification={activePushOverlay}
         onDismiss={() => setActivePushOverlay(null)}
@@ -880,7 +920,6 @@ export default function App() {
         onNavigate={(screen) => setCurrentScreen(screen)}
       />
 
-      {/* Drawer for Notification History and Push Settings */}
       <NotificationDrawer
         isOpen={isNotificationDrawerOpen}
         onClose={() => setIsNotificationDrawerOpen(false)}
@@ -894,7 +933,6 @@ export default function App() {
         onNavigate={(screen) => setCurrentScreen(screen)}
       />
 
-      {/* Booking Confirmation Modal overlay when booking succeeds */}
       {confirmedModalBooking && (
         <BookingConfirmationModal
           booking={confirmedModalBooking}
@@ -910,7 +948,6 @@ export default function App() {
         />
       )}
 
-      {/* Render Header for main views (outside max-w-md container for full viewport width) */}
       {currentScreen !== 'welcome' &&
         currentScreen !== 'splash' &&
         currentScreen !== 'location-modal' && currentScreen !== 'salon-detail' && currentScreen !== 'checkout' && (
@@ -932,13 +969,12 @@ export default function App() {
             unreadNotificationCount={unreadCount}
             onOpenNotifications={() => setIsNotificationDrawerOpen(true)}
             onOpenQrScanner={() => setIsGlobalScanQrOpen(true)}
-            userAvatar={profileAvatar}
+            userAvatar={avatarUrlWithVersion(profile)}
             isSyncing={isSyncing}
           />
         )}
 
       <div className="w-full flex-1 flex flex-col relative">
-        {/* Content Body Container */}
         <main
           className={`flex-1 w-full max-w-md mx-auto ${
             currentScreen !== 'welcome' &&
@@ -994,6 +1030,7 @@ export default function App() {
               isFavorite={favorites.includes(selectedSalon.id)}
               onToggleFavorite={() => handleToggleFavorite(selectedSalon.id)}
               bookings={bookings}
+              customerName={profile?.full_name ?? ''}
             />
           )}
 
@@ -1016,6 +1053,7 @@ export default function App() {
               onTriggerTestNotification={triggerPushNotificationForBooking}
               onAddReview={handleAddReviewFromBooking}
               onMarkBookingReviewed={handleMarkBookingReviewed}
+              customerName={profile?.full_name ?? ''}
               initialSelectedBookingId={initialBookingIdForBookings}
               onTrackPayment={(booking) =>
                 setPaymentWatch({
@@ -1034,18 +1072,14 @@ export default function App() {
               favoriteProfessionals={favoriteProfessionals}
               favoriteServices={favoriteServices}
               onToggleFavoriteSalon={handleToggleFavorite}
-              onToggleFavoriteProfessional={(proId) => {
-                setFavoriteProfessionals((prev) => prev.filter((p) => p.id !== proId));
-              }}
-              onToggleFavoriteService={(servId) => {
-                setFavoriteServices((prev) => prev.filter((s) => s.id !== servId));
-              }}
+              onToggleFavoriteProfessional={handleRemoveFavoriteProfessional}
+              onToggleFavoriteService={handleRemoveFavoriteService}
               onSelectSalon={handleSelectSalon}
               onNavigate={(s) => setCurrentScreen(s)}
             />
           )}
 
-          {currentScreen === 'rewards' && <RewardsScreen profile={profile} bookings={bookings} />}
+          {currentScreen === 'rewards' && <RewardsScreen profile={profile} bookings={bookings} customerName={profile?.full_name ?? ''} />}
 
           {currentScreen === 'profile' && (
             <ProfileScreen
@@ -1056,6 +1090,9 @@ export default function App() {
               onNavigate={(s) => setCurrentScreen(s)}
               onBack={handleBack}
               onOpenLocation={() => setCurrentScreen('location-modal')}
+              customerId={user.id}
+              onSaveProfile={(patch) => handleSaveProfile(patch)}
+              onUploadAvatar={handleUploadAvatar}
             />
           )}
 
@@ -1063,6 +1100,7 @@ export default function App() {
             <SavedAddressesScreen
               onBack={handleBack}
               onNavigate={(s) => setCurrentScreen(s)}
+              customerId={user.id}
             />
           )}
 
@@ -1070,6 +1108,7 @@ export default function App() {
             <SupportScreen
               onBack={handleBack}
               onNavigate={(s) => setCurrentScreen(s)}
+              customerId={user.id}
             />
           )}
 
@@ -1078,6 +1117,7 @@ export default function App() {
               profile={profile}
               onBack={handleBack}
               onNavigate={(s) => setCurrentScreen(s)}
+              customerId={user.id}
               onLogout={async () => {
                 setUser(null);
                 await supabase?.auth.signOut();
@@ -1130,27 +1170,25 @@ export default function App() {
             <LegalScreen type="cancellation" onBack={handleBack} />
           )}
 
-          {/* Safe Fallback for any unhandled screen state to prevent white screen */}
-              {!['welcome', 'home', 'search', 'salon-detail', 'checkout', 'bookings', 'favourites', 'rewards', 'profile', 'saved-addresses', 'support', 'settings', 'location-modal'].includes(currentScreen) && (
-                <HomeScreen
-                  location={userLocation}
-                  salons={salons}
-                  salonsLoading={salonsLoading}
-                  favorites={favorites}
-                  recentlyViewed={recentlyViewed}
-                  bookings={bookings}
-                  onToggleFavorite={handleToggleFavorite}
-                  onSelectSalon={handleSelectSalon}
-                  onNavigate={(s) => setCurrentScreen(s)}
-                  onOpenLocationSelector={() => setCurrentScreen('location-modal')}
-                  isAppointmentDismissed={isAppointmentDismissed}
-                  onDismissAppointment={() => setIsAppointmentDismissed(true)}
-                />
-              )}
+          {!['welcome', 'home', 'search', 'salon-detail', 'checkout', 'bookings', 'favourites', 'rewards', 'profile', 'saved-addresses', 'support', 'settings', 'location-modal', 'owner-dashboard', 'gp-dashboard', 'terms', 'privacy', 'cancellation'].includes(currentScreen) && (
+            <HomeScreen
+              location={userLocation}
+              salons={salons}
+              salonsLoading={salonsLoading}
+              favorites={favorites}
+              recentlyViewed={recentlyViewed}
+              bookings={bookings}
+              onToggleFavorite={handleToggleFavorite}
+              onSelectSalon={handleSelectSalon}
+              onNavigate={(s) => setCurrentScreen(s)}
+              onOpenLocationSelector={() => setCurrentScreen('location-modal')}
+              isAppointmentDismissed={isAppointmentDismissed}
+              onDismissAppointment={() => setIsAppointmentDismissed(true)}
+            />
+          )}
           </div>
         </main>
 
-        {/* Floating Bottom Navigation */}
         {paymentWatch && (
           <PaymentStatusTracker
             bookingId={paymentWatch.bookingId}
@@ -1170,14 +1208,15 @@ export default function App() {
         />
       </div>
 
-      {/* Global Scan UPI QR Code Modal */}
       <ScanUpiQrModal
         isOpen={isGlobalScanQrOpen}
         onClose={() => setIsGlobalScanQrOpen(false)}
         onUpiScanned={(scannedUpi) => {
-          const saved = localStorage.getItem('nexora_saved_upis');
-          const list: SavedUpi[] = saved ? JSON.parse(saved) : [];
-          localStorage.setItem('nexora_saved_upis', JSON.stringify([scannedUpi, ...list]));
+          if (supabase && user) {
+            addUpiMethod(supabase, user.id, scannedUpi).catch((e) =>
+              console.warn('UPI save notice:', e?.message || e),
+            );
+          }
           setIsGlobalScanQrOpen(false);
           setCurrentScreen('profile');
         }}
@@ -1188,7 +1227,6 @@ export default function App() {
         }}
       />
 
-      {/* Global Add UPI Modal for QR prefill */}
       <AddUpiModal
         isOpen={isGlobalAddUpiOpen}
         onClose={() => {
@@ -1201,9 +1239,11 @@ export default function App() {
           setIsGlobalScanQrOpen(true);
         }}
         onUpiAdded={(newUpi) => {
-          const saved = localStorage.getItem('nexora_saved_upis');
-          const list: SavedUpi[] = saved ? JSON.parse(saved) : [];
-          localStorage.setItem('nexora_saved_upis', JSON.stringify([newUpi, ...list]));
+          if (supabase && user) {
+            addUpiMethod(supabase, user.id, newUpi).catch((e) =>
+              console.warn('UPI save notice:', e?.message || e),
+            );
+          }
           setIsGlobalAddUpiOpen(false);
           setGlobalPrefilledUpi('');
           setCurrentScreen('profile');
@@ -1237,9 +1277,6 @@ export default function App() {
                 }
               });
             } else {
-              // Native prompt not available yet — keep the modal's manual
-              // installation guide visible; never fake an install success.
-              console.log('beforeinstallprompt not fired yet; showing manual guide');
               setIsPwaDismissedPermanently(localStorage.getItem('nexora_pwa_dismissed') === 'true');
               return;
             }
@@ -1251,4 +1288,3 @@ export default function App() {
     </div>
   );
 }
-

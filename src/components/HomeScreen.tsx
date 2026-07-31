@@ -96,9 +96,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     }
   };
 
-  // Load user bookings from prop to determine past service preferences
+  // Past-service preferences come from the server-hydrated bookings prop.
+  // (Pre-unification builds kept a localStorage copy — Supabase is now the
+  // single source of truth, so no local fallback is read here.)
   const userBookings: Booking[] = useMemo(() => {
-    return bookings || [];
+    return bookings && bookings.length > 0 ? bookings : [];
   }, [bookings]);
 
   // Analysis Logic Block 1: Frequent Services from User Booking History

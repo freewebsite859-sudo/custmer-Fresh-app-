@@ -15,6 +15,7 @@ interface SalonDetailScreenProps {
   isFavorite: boolean;
   onToggleFavorite: () => void;
   bookings: Booking[];
+  customerName?: string;
 }
 
 export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
@@ -28,6 +29,7 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
   isFavorite,
   onToggleFavorite,
   bookings,
+  customerName = '',
 }) => {
   const availableStaff = salon.staff || [];
 
@@ -191,6 +193,7 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
         salon={salon}
         preselectedServiceId={reviewModalServiceId}
         initialRating={initialReviewRating}
+        authorName={customerName || 'Customer'}
         onSubmitReview={handleAddReview}
       />
 
@@ -1009,12 +1012,10 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-[15px] text-[#26181c]">{rev.author}</span>
-                            {rev.verifiedBooking && (
-                              <span className="text-[10px] font-extrabold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md border border-emerald-200 flex items-center gap-0.5">
-                                <span className="material-symbols-outlined text-[12px]">verified</span>
-                                Verified Client
-                              </span>
-                            )}
+                            <span className="text-[10px] font-extrabold bg-slate-50 text-slate-600 px-2 py-0.5 rounded-md border border-slate-200 flex items-center gap-0.5">
+                              <span className="material-symbols-outlined text-[12px]">smartphone</span>
+                              On this device
+                            </span>
                           </div>
                           <div className="flex items-center gap-1.5 mt-1">
                             <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-[#fde7f3] text-[#e6007e] border border-[#fcd5e8]">
