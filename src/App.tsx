@@ -1092,9 +1092,11 @@ export default function App() {
                 }
               });
             } else {
-              // Mock success if no prompt is available (for preview)
-              setIsAppInstalled(true);
-              localStorage.setItem('nexora_app_installed', 'true');
+              // Native prompt not available yet — keep the modal's manual
+              // installation guide visible; never fake an install success.
+              console.log('beforeinstallprompt not fired yet; showing manual guide');
+              setIsPwaDismissedPermanently(localStorage.getItem('nexora_pwa_dismissed') === 'true');
+              return;
             }
             setIsPwaDismissedPermanently(localStorage.getItem('nexora_pwa_dismissed') === 'true');
             setIsInstallModalOpen(false);

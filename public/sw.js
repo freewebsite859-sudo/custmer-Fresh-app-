@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexora-v2';
+const CACHE_NAME = 'nexora-v3';
 const SYNC_APPOINTMENTS = 'sync-appointments';
 
 // Assets to cache immediately on install
@@ -6,7 +6,9 @@ const PRECACHE_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/icon.jpg'
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon-512-maskable.png'
 ];
 
 self.addEventListener('install', (event) => {

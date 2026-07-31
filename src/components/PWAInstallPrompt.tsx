@@ -71,7 +71,7 @@ export const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({ deferredProm
           <div className="flex items-start gap-4">
             <div className="w-14 h-14 rounded-2xl overflow-hidden shadow-lg flex-shrink-0 bg-white">
               <img 
-                src="/icon.jpg" 
+                src="/icons/icon-192.png" 
                 alt="Nexora Icon" 
                 className="w-full h-full object-cover"
               />
