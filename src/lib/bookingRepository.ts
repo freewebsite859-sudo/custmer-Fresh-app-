@@ -121,9 +121,17 @@ export async function loadRazorpayCheckout(): Promise<void> {
   });
 }
 
+export interface RazorpayOpenCallbacks {
+  /** Fired by Razorpay checkout.js ONLY after a successful payment (UPI/QR/cards). */
+  onPaymentSuccess?: (paymentId: string | null) => void;
+  /** Fired when the user closes the Razorpay window without completing payment. */
+  onDismiss?: () => void;
+}
+
 export function openRazorpayAdvanceCheckout(
   order: RazorpayAdvanceOrder,
   prefillEmail: string,
+  callbacks?: RazorpayOpenCallbacks,
 ): void {
   const Razorpay = (
     window as typeof window & {
@@ -140,5 +148,13 @@ export function openRazorpayAdvanceCheckout(
     description: order.description,
     prefill: { email: prefillEmail },
     theme: { color: '#e6007e' },
+    handler: (response: { razorpay_payment_id?: string }) => {
+      callbacks?.onPaymentSuccess?.(response?.razorpay_payment_id ?? null);
+    },
+    modal: {
+      ondismiss: () => {
+        callbacks?.onDismiss?.();
+      },
+    },
   }).open();
 }

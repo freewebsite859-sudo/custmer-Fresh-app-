@@ -8,6 +8,7 @@ import {
 } from './data/mockData';
 import { fetchPublicSalons } from './lib/salonRepository';
 import { createCustomerBooking, createAdvanceOrder, loadRazorpayCheckout, openRazorpayAdvanceCheckout } from './lib/bookingRepository';
+import { PaymentStatusTracker } from './components/PaymentStatusTracker';
 
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
@@ -166,6 +167,12 @@ export default function App() {
   };
 
   const [isAppointmentDismissed, setIsAppointmentDismissed] = useState(false);
+  // Live payment tracking watch (active Razorpay advance flow for a booking).
+  const [paymentWatch, setPaymentWatch] = useState<{
+    bookingId: string;
+    salonName: string;
+    paymentSubmitted: boolean;
+  } | null>(null);
   const [salons, setSalons] = useState<Salon[]>([]);
   const [salonsLoading, setSalonsLoading] = useState(true);
   const [selectedSalon, setSelectedSalon] = useState<Salon | null>(null);
@@ -632,9 +639,18 @@ export default function App() {
     });
     //   2) secure advance order — amount is computed SERVER-side (25%)
     const order = await createAdvanceOrder(supabase, session.access_token, bookingId);
-    //   3) open the real Razorpay checkout window
+    //   3) open the real Razorpay checkout window (UPI apps / QR scan supported)
     await loadRazorpayCheckout();
-    openRazorpayAdvanceCheckout(order, session.user?.email ?? '');
+    openRazorpayAdvanceCheckout(order, session.user?.email ?? '', {
+      // Razorpay fires this only after a successful payment — moves the
+      // tracker to the interim "received, confirming…" stage (NOT final confirm;
+      // the server/webhook stays the authority).
+      onPaymentSuccess: () => {
+        setPaymentWatch((prev) =>
+          prev ? { ...prev, paymentSubmitted: true } : prev,
+        );
+      },
+    });
 
     const newBooking: Booking = {
       id: bookingId,
@@ -651,8 +667,23 @@ export default function App() {
     };
 
     setBookings((prev) => [newBooking, ...prev]);
+    // Start live in-app payment tracking for this booking (QR/UPI flow).
+    setPaymentWatch({
+      bookingId: newBooking.id,
+      salonName: newBooking.salonName,
+      paymentSubmitted: false,
+    });
     setCurrentScreen('bookings');
     return newBooking;
+  };
+
+  // Called by PaymentStatusTracker ONLY when the bookings row itself proves payment.
+  const handlePaymentProven = (bookingId: string) => {
+    setBookings((prev) =>
+      prev.map((b) =>
+        b.id === bookingId ? { ...b, status: 'CONFIRMED' as Booking['status'] } : b,
+      ),
+    );
   };
 
   const handleCancelBooking = (bookingId: string) => {
@@ -930,6 +961,13 @@ export default function App() {
               onAddReview={handleAddReviewFromBooking}
               onMarkBookingReviewed={handleMarkBookingReviewed}
               initialSelectedBookingId={initialBookingIdForBookings}
+              onTrackPayment={(booking) =>
+                setPaymentWatch({
+                  bookingId: booking.id,
+                  salonName: booking.salonName,
+                  paymentSubmitted: false,
+                })
+              }
             />
           )}
 
@@ -1022,6 +1060,16 @@ export default function App() {
         </main>
 
         {/* Floating Bottom Navigation */}
+        {paymentWatch && (
+          <PaymentStatusTracker
+            bookingId={paymentWatch.bookingId}
+            salonName={paymentWatch.salonName}
+            paymentSubmitted={paymentWatch.paymentSubmitted}
+            onConfirmed={handlePaymentProven}
+            onClose={() => setPaymentWatch(null)}
+          />
+        )}
+
         <BottomNav
           currentScreen={currentScreen}
           onNavigate={(s) => setCurrentScreen(s)}

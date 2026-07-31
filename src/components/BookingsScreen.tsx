@@ -3,6 +3,7 @@ import { Booking, Screen, Salon, ServiceReview } from '../types';
 import { ServiceReviewModal } from './ServiceReviewModal';
 import { BookingDetailsModal } from './BookingDetailsModal';
 import { CancelBookingModal } from './CancelBookingModal';
+import { PaymentStatusBadge } from './PaymentStatusTracker';
 
 interface BookingsScreenProps {
   bookings: Booking[];
@@ -13,6 +14,7 @@ interface BookingsScreenProps {
   onAddReview: (salonId: string, newReview: Omit<ServiceReview, 'id' | 'date'>) => void;
   onMarkBookingReviewed: (bookingId: string) => void;
   initialSelectedBookingId?: string;
+  onTrackPayment?: (booking: Booking) => void;
 }
 
 export const BookingsScreen: React.FC<BookingsScreenProps> = ({
@@ -24,6 +26,7 @@ export const BookingsScreen: React.FC<BookingsScreenProps> = ({
   onAddReview,
   onMarkBookingReviewed,
   initialSelectedBookingId,
+  onTrackPayment,
 }) => {
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -39,8 +42,10 @@ export const BookingsScreen: React.FC<BookingsScreenProps> = ({
   const [reviewModalBooking, setReviewModalBooking] = useState<Booking | null>(null);
   const [cancellingBooking, setCancellingBooking] = useState<Booking | null>(null);
 
+  // Bookings whose 25% advance is pending stay visible under Upcoming,
+  // with a live "Payment Pending" tracker badge.
   const upcomingBookings = bookings.filter(
-    (b) => b.status === 'CONFIRMED' || b.status === 'PENDING'
+    (b) => b.status === 'CONFIRMED' || b.status === 'PENDING' || b.status === 'payment_pending'
   );
   const pastBookings = bookings.filter(
     (b) => b.status === 'PAST' || b.status === 'COMPLETED'
@@ -108,7 +113,7 @@ export const BookingsScreen: React.FC<BookingsScreenProps> = ({
                             : 'bg-amber-50 text-amber-700 border border-amber-200'
                         }`}
                       >
-                        {booking.status}
+                        {booking.status === 'payment_pending' ? 'PAYMENT PENDING' : booking.status}
                       </span>
                       <h3 className="text-[18px] text-[#26181c] font-bold mb-0.5 group-hover:text-[#e6007e] transition-colors">
                         {booking.salonName}
@@ -116,6 +121,10 @@ export const BookingsScreen: React.FC<BookingsScreenProps> = ({
                       <p className="text-[14px] text-[#5a3f47] font-medium">
                         {booking.services.map((s) => s.name).join(', ')}
                       </p>
+                      <PaymentStatusBadge
+                        status={booking.status}
+                        onTrack={() => onTrackPayment?.(booking)}
+                      />
                     </div>
                     <div className="w-12 h-12 rounded-full bg-[#ffe8ed] flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                       <span className="material-symbols-outlined text-[#8e004b]">content_cut</span>
