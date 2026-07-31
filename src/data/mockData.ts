@@ -8,22 +8,7 @@ export const LOCATION_PIN_URL = 'https://lh3.googleusercontent.com/aida-public/A
 export const WELCOME_BG_URL = 'https://lh3.googleusercontent.com/aida-public/AB6AXuDGlC0y_Xz7ws9fBk2enobNYh_8MeOC3_im9Vw1YDOlIopdHcUPp2vnWjDM9eJQVHfp81c_JtHXfmlRhS-QG1F2I5kvPJzHrcpVvurCwHS2KkFxHWBSSRgkYpdI47_fPMvqmFv75zYI3NQFSsYIcdc6dCZ8-7lBaTl4or6AswOuZ4_rBqfdADrYNchiUpNjt9KAZSdAcZrJjDAxo9Rv8hz2NouIh23-guUR9ZMazmHiio7YoqW-Gd_gEAcOcNW8ThyembA8056Yr2k';
 
 export const INITIAL_LOCATION: UserLocation = {
-  city: 'Mumbai',
-  area: 'Indiranagar, Bangalore',
-  isGPS: true,
+  city: 'Jaipur',
+  area: 'North Jaipur > Jhotwara',
+  isGPS: false,
 };
-
-export const POPULAR_CITIES = [
-  'Jaipur',
-  'Delhi',
-  'Mumbai',
-  'Bengaluru',
-  'Pune',
-  'Ahmedabad',
-];
-
-export const RECENT_LOCATIONS = [
-  { area: 'Malviya Nagar', cityState: 'Jaipur, Rajasthan' },
-  { area: 'Bandra West', cityState: 'Mumbai, Maharashtra' },
-  { area: 'Koramangala', cityState: 'Bengaluru, Karnataka' },
-];
