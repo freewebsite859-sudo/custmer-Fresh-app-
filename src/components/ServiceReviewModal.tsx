@@ -6,6 +6,7 @@ interface ServiceReviewModalProps {
   onClose: () => void;
   salon: Salon;
   preselectedServiceId?: string;
+  initialRating?: number;
   onSubmitReview: (newReview: Omit<ServiceReview, 'id' | 'date'>) => void;
 }
 
@@ -14,6 +15,7 @@ export const ServiceReviewModal: React.FC<ServiceReviewModalProps> = ({
   onClose,
   salon,
   preselectedServiceId,
+  initialRating,
   onSubmitReview,
 }) => {
   const [selectedServiceId, setSelectedServiceId] = useState<string>('');
@@ -31,6 +33,18 @@ export const ServiceReviewModal: React.FC<ServiceReviewModalProps> = ({
       setSelectedServiceId(salon.services[0].id);
     }
   }, [preselectedServiceId, salon]);
+
+  // Seed the star rating whenever the modal is opened (inline quick-rate passes initialRating)
+  useEffect(() => {
+    if (isOpen) {
+      const seeded =
+        typeof initialRating === 'number' && initialRating >= 1 && initialRating <= 5
+          ? Math.round(initialRating)
+          : 5;
+      setRating(seeded);
+      setHoverRating(0);
+    }
+  }, [isOpen, initialRating]);
 
   if (!isOpen) return null;
 

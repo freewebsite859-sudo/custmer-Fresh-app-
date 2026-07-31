@@ -60,6 +60,7 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
   // Service Review States
   const [isReviewModalOpen, setIsReviewModalOpen] = useState<boolean>(false);
   const [reviewModalServiceId, setReviewModalServiceId] = useState<string | undefined>(undefined);
+  const [initialReviewRating, setInitialReviewRating] = useState<number | undefined>(undefined);
   const [selectedServiceFilter, setSelectedServiceFilter] = useState<string>('all');
 
   // Waitlist States
@@ -205,8 +206,9 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
     setServiceReviews((prev) => [created, ...prev]);
   };
 
-  const openReviewForService = (serviceId?: string) => {
+  const openReviewForService = (serviceId?: string, preselectedRating?: number) => {
     setReviewModalServiceId(serviceId);
+    setInitialReviewRating(preselectedRating);
     setIsReviewModalOpen(true);
   };
 
@@ -236,9 +238,13 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
       {/* Service Review Modal */}
       <ServiceReviewModal
         isOpen={isReviewModalOpen}
-        onClose={() => setIsReviewModalOpen(false)}
+        onClose={() => {
+          setIsReviewModalOpen(false);
+          setInitialReviewRating(undefined);
+        }}
         salon={salon}
         preselectedServiceId={reviewModalServiceId}
+        initialRating={initialReviewRating}
         onSubmitReview={handleAddReview}
       />
 
@@ -1044,6 +1050,32 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
                   <span className="material-symbols-outlined text-[16px]">rate_review</span>
                   Write Review
                 </button>
+              </div>
+
+              {/* Inline Quick Star Rating */}
+              <div className="bg-white rounded-2xl border border-[#fcd5e8] shadow-xs p-4 flex items-center justify-between gap-3">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[13px] font-bold text-[#26181c] flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[#e6007e] text-[16px]">star_rate</span>
+                    Rate this salon
+                  </span>
+                  <span className="text-[10px] text-[#8c7077]">Tap a star to start your review</span>
+                </div>
+                <div className="flex items-center gap-0.5" role="radiogroup" aria-label="Quick star rating">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => openReviewForService(undefined, star)}
+                      className="p-1 transition-transform hover:scale-110 active:scale-125 focus:outline-none cursor-pointer group"
+                      aria-label={`Quick rate ${star} stars`}
+                    >
+                      <span className="material-symbols-outlined text-[28px] text-[#e0bec6] transition-colors group-hover:text-amber-500 group-hover:fill-current">
+                        star
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Service Ratings Breakdown Card */}
