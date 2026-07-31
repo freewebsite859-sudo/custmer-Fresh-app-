@@ -14,7 +14,30 @@ export type Screen =
   | 'profile'
   | 'saved-addresses'
   | 'support'
-  | 'settings';
+  | 'settings'
+  | 'owner-dashboard'
+  | 'gp-dashboard'
+  | 'terms'
+  | 'privacy'
+  | 'cancellation';
+
+export type UserRole = 'customer' | 'business_user' | 'growth_partner';
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  full_name: string | null;
+  phone: string | null;
+  photo_url: string | null;
+  platform_role: UserRole;
+  is_active: boolean;
+  dob: string | null;
+  gender: string | null;
+  preferred_city: string | null;
+  preferred_area: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export type BookingStatus = 'CONFIRMED' | 'PENDING' | 'PAST' | 'COMPLETED' | 'CANCELLED' | 'payment_pending';
 

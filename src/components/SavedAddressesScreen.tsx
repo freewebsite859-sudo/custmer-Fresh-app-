@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { supabase } from '../lib/supabaseClient';
 import { Address } from '../types';
 
 interface SavedAddressesScreenProps {
@@ -10,39 +11,39 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
   onBack,
   onNavigate,
 }) => {
-  const [addresses, setAddresses] = useState<Address[]>(() => {
-    const saved = localStorage.getItem('nexora_saved_addresses');
-    if (saved) return JSON.parse(saved);
-    return [
-      {
-        id: 'addr-1',
-        label: 'Home',
-        flatNumber: 'Apt 4B, The Zenith Apartments',
-        street: '124 Marina Boulevard',
-        city: 'San Francisco, CA',
-        pincode: '94123',
-        isDefault: true,
-      },
-      {
-        id: 'addr-2',
-        label: 'Work',
-        flatNumber: 'Nexora Headquarters, Floor 12',
-        street: '500 Tech Square',
-        city: 'San Francisco, CA',
-        pincode: '94105',
-        isDefault: false,
-      },
-      {
-        id: 'addr-3',
-        label: 'Mom\'s House',
-        flatNumber: '889 Pinecrest Drive',
-        street: 'Suburban Enclave',
-        city: 'San Mateo, CA',
-        pincode: '94401',
-        isDefault: false,
-      },
-    ];
-  });
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchAddresses();
+  }, []);
+
+  const fetchAddresses = async () => {
+    if (!supabase) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('user_addresses')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('is_default', { ascending: false });
+
+    if (!error && data) {
+      setAddresses(data.map((a: any) => ({
+        id: a.id,
+        label: a.label,
+        flatNumber: a.flat_number,
+        street: a.street,
+        landmark: a.landmark,
+        city: a.city,
+        pincode: a.pincode,
+        isDefault: a.is_default,
+      })));
+    }
+    setLoading(false);
+  };
 
   const [view, setView] = useState<'list' | 'form'>('list');
   const [selectedAddress, setSelectedAddress] = useState<Address | null>(null);
@@ -52,130 +53,93 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
   const [formFlatNumber, setFormFlatNumber] = useState<string>('');
   const [formStreet, setFormStreet] = useState<string>('');
   const [formLandmark, setFormLandmark] = useState<string>('');
-  const [formCity, setFormCity] = useState<string>('San Francisco, CA');
+  const [formCity, setFormCity] = useState<string>('Jaipur');
   const [formPincode, setFormPincode] = useState<string>('');
   const [formIsDefault, setFormIsDefault] = useState<boolean>(false);
   const [isLocating, setIsLocating] = useState<boolean>(false);
   const [toast, setToast] = useState<string | null>(null);
-
-  useEffect(() => {
-    localStorage.setItem('nexora_saved_addresses', JSON.stringify(addresses));
-  }, [addresses]);
 
   const triggerToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   };
 
-  const handleSetDefault = (id: string) => {
-    setAddresses((prev) =>
-      prev.map((a) => ({
-        ...a,
-        isDefault: a.id === id,
-      }))
-    );
+  const handleSetDefault = async (id: string) => {
+    if (!supabase) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // Reset all to false first
+    await supabase
+      .from('user_addresses')
+      .update({ is_default: false })
+      .eq('user_id', user.id);
+
+    // Set selected to true
+    await supabase
+      .from('user_addresses')
+      .update({ is_default: true })
+      .eq('id', id);
+
+    fetchAddresses();
     triggerToast('Default address updated!');
   };
 
-  const handleDelete = (id: string) => {
-    setAddresses((prev) => {
-      const filtered = prev.filter((a) => a.id !== id);
-      // If default was deleted, make first remaining address default
-      if (filtered.length > 0 && !filtered.some((a) => a.isDefault)) {
-        filtered[0].isDefault = true;
-      }
-      return filtered;
-    });
-    triggerToast('Address deleted successfully!');
-  };
+  const handleDelete = async (id: string) => {
+    if (!supabase) return;
+    const { error } = await supabase
+      .from('user_addresses')
+      .delete()
+      .eq('id', id);
 
-  const handleOpenForm = (address?: Address) => {
-    if (address) {
-      setSelectedAddress(address);
-      setFormLabel(address.label);
-      setFormFlatNumber(address.flatNumber);
-      setFormStreet(address.street);
-      setFormLandmark(address.landmark || '');
-      setFormCity(address.city);
-      setFormPincode(address.pincode);
-      setFormIsDefault(address.isDefault);
-    } else {
-      setSelectedAddress(null);
-      setFormLabel('Home');
-      setFormFlatNumber('');
-      setFormStreet('');
-      setFormLandmark('');
-      setFormCity('San Francisco, CA');
-      setFormPincode('');
-      setFormIsDefault(addresses.length === 0);
+    if (!error) {
+      fetchAddresses();
+      triggerToast('Address deleted successfully!');
     }
-    setView('form');
   };
 
-  const handleLocateMe = () => {
-    setIsLocating(true);
-    triggerToast('Determining GPS Coordinates...');
-    setTimeout(() => {
-      setIsLocating(false);
-      setFormFlatNumber('Apt 12B, Oceanview Towers');
-      setFormStreet('88 Marina Boulevard');
-      setFormCity('San Francisco, CA');
-      setFormPincode('94123');
-      setFormLandmark('Near Marina Park');
-      triggerToast('GPS Address filled successfully!');
-    }, 1200);
-  };
-
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!supabase) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
     if (!formFlatNumber.trim() || !formStreet.trim() || !formCity.trim() || !formPincode.trim()) {
       triggerToast('Please fill in all required fields.');
       return;
     }
 
     const newAddressData = {
+      user_id: user.id,
       label: formLabel,
-      flatNumber: formFlatNumber,
+      flat_number: formFlatNumber,
       street: formStreet,
       landmark: formLandmark,
       city: formCity,
       pincode: formPincode,
-      isDefault: formIsDefault,
+      is_default: formIsDefault || addresses.length === 0,
     };
 
-    setAddresses((prev) => {
-      let updated: Address[];
-      if (selectedAddress) {
-        // Edit mode
-        updated = prev.map((a) =>
-          a.id === selectedAddress.id
-            ? { ...a, ...newAddressData }
-            : a
-        );
-      } else {
-        // Add mode
-        const newAddress: Address = {
-          id: `addr-${Date.now()}`,
-          ...newAddressData,
-        };
-        updated = [...prev, newAddress];
-      }
+    if (formIsDefault) {
+      // Reset others
+      await supabase
+        .from('user_addresses')
+        .update({ is_default: false })
+        .eq('user_id', user.id);
+    }
 
-      // Handle default constraint
-      if (formIsDefault) {
-        updated = updated.map((a) => ({
-          ...a,
-          isDefault: selectedAddress ? (a.id === selectedAddress.id ? true : false) : (a.id === updated[updated.length - 1].id ? true : false),
-        }));
-      } else if (!updated.some((a) => a.isDefault)) {
-        if (updated.length > 0) {
-          updated[0].isDefault = true;
-        }
-      }
+    if (selectedAddress) {
+      await supabase
+        .from('user_addresses')
+        .update(newAddressData)
+        .eq('id', selectedAddress.id);
+    } else {
+      await supabase
+        .from('user_addresses')
+        .insert(newAddressData);
+    }
 
-      return updated;
-    });
-
+    fetchAddresses();
     triggerToast(selectedAddress ? 'Address updated!' : 'Address added successfully!');
     setView('list');
   };

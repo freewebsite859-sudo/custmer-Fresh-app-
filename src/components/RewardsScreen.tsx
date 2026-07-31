@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Booking, LoyaltyTier } from '../types';
 
 interface RewardsScreenProps {
+  profile: UserProfile | null;
   bookings?: Booking[];
 }
 
@@ -99,7 +100,7 @@ interface LeaderboardMember {
   isUser?: boolean;
 }
 
-export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) => {
+export const RewardsScreen: React.FC<RewardsScreenProps> = ({ profile, bookings = [] }) => {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
@@ -109,23 +110,13 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
   const [selectedTierTab, setSelectedTierTab] = useState<string | null>(null);
   const [showRedeemModal, setShowRedeemModal] = useState(false);
   const [redeemedDiscount, setRedeemedDiscount] = useState<number | null>(null);
-  const [redeemedPointsSpent, setRedeemedPointsSpent] = useState<number>(0);
 
-  // Expiring Rewards — none fabricated; populated from real offers when available
-  const [expiringRewards] = useState<Array<{ id: string; name: string; expiryDate: string }>>([]);
-
-  // Leaderboard State
-  const [leaderboardTimeframe, setLeaderboardTimeframe] = useState<'all_time' | 'this_month' | 'weekly'>('all_time');
-
-  // Referral State
-  const [userReferralCode] = useState(() => {
-    const raw = (localStorage.getItem('profile_name') || 'GUEST').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 8) || 'GUEST';
-    let hash = 0;
-    for (const ch of raw) hash = (hash * 31 + ch.charCodeAt(0)) % 9000;
-    return `GLOW-${raw}-${String(1000 + hash)}`;
-  });
-  const [bonusReferralPoints] = useState<number>(0);
-  const [referralsList] = useState<ReferralItem[]>([]);
+  // Referral State - synced with DB profile
+  const userReferralCode = profile?.id ? `NEX-${profile.id.slice(0, 4).toUpperCase()}` : 'GLOW-GUEST';
+  
+  // Loyalty points and wallet balance from profile
+  const loyaltyPoints = (profile as any)?.loyalty_points || 0;
+  const walletBalance = ((profile as any)?.wallet_balance_paise || 0) / 100;
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -133,12 +124,7 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
   const validBookings = bookings.filter((b) => b.status !== 'CANCELLED');
   const totalBookingsCount = validBookings.length;
 
-  // Calculate total points dynamically (Base + Bookings + Referral Bonuses - Spent)
-  const basePoints = 0; // no free starting balance — points come from real activity only
-  const bookingPoints = totalBookingsCount * 625;
-  const calculatedPoints = Math.max(0, basePoints + bookingPoints + bonusReferralPoints - redeemedPointsSpent);
-
-  const referralLink = `${window.location.origin}/invite/${userReferralCode}`;
+  const referralLink = `${window.location.origin}/signup?ref=${userReferralCode}`;
 
   // Compute Current Tier & Progress
   const getTierDetails = (count: number) => {
@@ -181,11 +167,11 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
 
   // Current Logged-in User Profile in Leaderboard
   const currentUserMember: LeaderboardMember = {
-    id: 'priya-current-user',
-    name: `${localStorage.getItem('profile_name') || 'Customer'} (You)`,
-    pointsAllTime: calculatedPoints,
-    pointsMonthly: Math.floor(calculatedPoints * 0.7),
-    pointsWeekly: Math.floor(calculatedPoints * 0.4),
+    id: profile?.id || 'guest',
+    name: `${profile?.full_name || 'Customer'} (You)`,
+    pointsAllTime: loyaltyPoints,
+    pointsMonthly: Math.floor(loyaltyPoints * 0.7),
+    pointsWeekly: Math.floor(loyaltyPoints * 0.4),
     bookings: totalBookingsCount,
     tier: currentTier.name.split(' ')[0],
     avatarBg: 'bg-[#e6007e] text-white border-white',
@@ -280,18 +266,12 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
           </p>
           <div className="flex items-baseline gap-2 mt-0.5">
             <h2 className="text-[38px] font-extrabold tracking-tight">
-              {calculatedPoints.toLocaleString()}
+              {loyaltyPoints.toLocaleString()}
             </h2>
             <span className="text-sm font-semibold text-white/80">pts</span>
           </div>
           <div className="flex items-center gap-2 text-[10px] text-white/80 mt-1 font-medium">
-            <span>Bookings: {bookingPoints} pts</span>
-            {bonusReferralPoints > 0 && (
-              <>
-                <span>•</span>
-                <span className="text-amber-200 font-bold">Referral Bonus: +{bonusReferralPoints} pts</span>
-              </>
-            )}
+             <span>Wallet Balance: ₹{walletBalance.toFixed(2)}</span>
           </div>
         </div>
 
@@ -907,16 +887,27 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ bookings = [] }) =
                 { pts: 1000, discount: 250, label: '₹250 Off Voucher' },
                 { pts: 2000, discount: 500, label: '₹500 Off Voucher' },
               ].map((opt) => {
-                const canAfford = calculatedPoints >= opt.pts;
+                const canAfford = loyaltyPoints >= opt.pts;
                 return (
                   <button
                     key={opt.pts}
                     disabled={!canAfford}
-                    onClick={() => {
-                      setRedeemedDiscount(opt.discount);
-                      setRedeemedPointsSpent((prev) => prev + opt.pts);
-                      setShowRedeemModal(false);
-                      triggerToast(`Redeemed ${opt.pts} pts for ${opt.label}!`);
+                    onClick={async () => {
+                      if (!supabase || !profile) return;
+                      
+                      const { error } = await supabase
+                        .from('profiles')
+                        .update({
+                          loyalty_points: loyaltyPoints - opt.pts,
+                          wallet_balance_paise: ((profile as any).wallet_balance_paise || 0) + (opt.discount * 100)
+                        })
+                        .eq('id', profile.id);
+
+                      if (!error) {
+                        setRedeemedDiscount(opt.discount);
+                        setShowRedeemModal(false);
+                        triggerToast(`Redeemed ${opt.pts} pts for ${opt.label}!`);
+                      }
                     }}
                     className={`w-full p-3.5 rounded-2xl border flex items-center justify-between text-left transition-all ${
                       canAfford

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase, supabaseConfigError } from './lib/supabaseClient';
-import { Screen, Salon, Service, Staff, Booking, UserLocation, AppNotification, ServiceReview, SavedProfessional, SavedService } from './types';
+import { Screen, Salon, Service, Staff, Booking, UserLocation, AppNotification, ServiceReview, SavedProfessional, SavedService, UserProfile } from './types';
 import {
   INITIAL_LOCATION,
 } from './data/mockData';
@@ -35,9 +35,13 @@ import { AddUpiModal, SavedUpi } from './components/AddUpiModal';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { InstallApp } from './components/InstallApp';
 import { Modal } from './components/Modal';
+import { OwnerDashboard } from './components/OwnerDashboard';
+import { GrowthPartnerDashboard } from './components/GrowthPartnerDashboard';
+import { LegalScreen } from './components/LegalScreen';
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authScreen, setAuthScreen] = useState<'login' | 'signup' | 'role-conflict'>('login');
   const [conflictRole, setConflictRole] = useState<string | null>(null);
@@ -54,57 +58,68 @@ export default function App() {
 
     const client = supabase;
 
-    // Reads the real profile record and enforces the locked role contract:
-    // access only when platform_role === 'customer' AND is_active === true.
-    const verifyCustomerAccess = async (
-      authUser: { id: string }
-    ): Promise<{ allowed: boolean; role: string | null }> => {
-      const readRole = async (): Promise<string | null> => {
-        const { data: profile, error } = await client
-          .from('profiles')
-          .select('platform_role, is_active')
-          .eq('id', authUser.id)
-          .maybeSingle();
-        if (error || !profile) return null;
-        if (profile.platform_role === 'customer' && profile.is_active === true) {
-          return 'customer';
-        }
-        return profile.platform_role ?? 'unsupported';
-      };
-
-      let role = await readRole();
-      if (role === null) {
-        // A brand-new signup can briefly precede its profile row; retry once
-        // before treating the account as missing/unsupported.
-        await new Promise((resolve) => setTimeout(resolve, 1200));
-        role = await readRole();
+    const fetchProfile = async (userId: string) => {
+      const { data, error } = await client
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+      
+      if (error) {
+        console.error('Error fetching profile:', error);
+        return null;
       }
-      return { allowed: role === 'customer', role };
+      return data as UserProfile;
     };
 
     const applySession = async (session: { user?: any } | null) => {
       if (!isMounted) return;
       const authUser = session?.user ?? null;
       if (!authUser) {
-        // No session (or session expired/removed): always return to login.
         setUser(null);
+        setProfile(null);
         setAuthLoading(false);
         return;
       }
 
-      const { allowed, role } = await verifyCustomerAccess(authUser);
+      let userProfile = await fetchProfile(authUser.id);
+      
+      // Retry logic for brand new signups
+      if (!userProfile) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        userProfile = await fetchProfile(authUser.id);
+      }
+
       if (!isMounted) return;
 
-      if (allowed) {
-        setConflictRole(null);
-        setUser(authUser);
-      } else {
-        // Block non-customer, inactive or role-less accounts and end the
-        // session so a refresh always returns to a safe auth screen.
+      if (userProfile && userProfile.is_active) {
+        const allowedRoles = ['customer', 'business_user', 'growth_partner'];
+        if (allowedRoles.includes(userProfile.platform_role)) {
+          setConflictRole(null);
+          setUser({ ...authUser, role: userProfile.platform_role });
+          setProfile(userProfile);
+          
+          if (userProfile.platform_role === 'business_user') setCurrentScreen('owner-dashboard');
+          else if (userProfile.platform_role === 'growth_partner') setCurrentScreen('gp-dashboard');
+        } else {
+          setUser(null);
+          setProfile(null);
+          setConflictRole(userProfile.platform_role);
+          setAuthScreen('role-conflict');
+          await client.auth.signOut();
+        }
+      } else if (userProfile && !userProfile.is_active) {
         setUser(null);
-        setConflictRole(role);
+        setProfile(null);
+        setConflictRole('inactive');
         setAuthScreen('role-conflict');
         await client.auth.signOut();
+      } else {
+        // No profile found even after retry
+        setUser(null);
+        setProfile(null);
+        setAuthLoading(false);
+        return;
       }
       setAuthLoading(false);
     };
@@ -120,24 +135,32 @@ export default function App() {
             }
             void applySession(data?.session ?? null);
           }
-        })
-        .catch((err) => {
-          console.warn('Supabase auth notice:', err?.message || err);
-          if (isMounted) {
-            setUser(null);
-            setAuthLoading(false);
-          }
         });
 
-      const { data } = client.auth.onAuthStateChange((_event, session) => {
+      const { data: authListener } = client.auth.onAuthStateChange((_event, session) => {
         if (isMounted) {
           void applySession(session);
         }
       });
 
+      // Realtime subscription for profile changes
+      const profileSubscription = client
+        .channel('public:profiles')
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'profiles' },
+          (payload) => {
+            if (isMounted && user && payload.new.id === user.id) {
+              setProfile(payload.new as UserProfile);
+            }
+          }
+        )
+        .subscribe();
+
       return () => {
         isMounted = false;
-        data?.subscription?.unsubscribe();
+        authListener?.subscription?.unsubscribe();
+        profileSubscription.unsubscribe();
       };
     } catch (e) {
       console.warn('Supabase init notice:', e);
@@ -145,7 +168,7 @@ export default function App() {
         setAuthLoading(false);
       }
     }
-  }, []);
+  }, [user?.id]);
 
   const [screenStack, setScreenStack] = useState<Screen[]>(['home']);
   const currentScreen = screenStack[screenStack.length - 1];
@@ -215,70 +238,126 @@ export default function App() {
     return INITIAL_LOCATION;
   });
 
-  const [favorites, setFavorites] = useState<string[]>(() => {
-    const saved = localStorage.getItem('nexora_favorites');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse favorites:', e);
-      }
-    }
-    return [];
-  });
-
-  const [recentlyViewed, setRecentlyViewed] = useState<string[]>(() => {
-    const saved = localStorage.getItem('nexora_recently_viewed');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse recently viewed:', e);
-      }
-    }
-    return [];
-  });
+  const [favorites, setFavorites] = useState<string[]>([]);
 
   useEffect(() => {
-    localStorage.setItem('nexora_recently_viewed', JSON.stringify(recentlyViewed));
-  }, [recentlyViewed]);
-
-  const [favoriteProfessionals, setFavoriteProfessionals] = useState<SavedProfessional[]>(() => {
-    const saved = localStorage.getItem('nexora_favorite_pros');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse favorite professionals:', e);
-      }
+    if (!supabase || !user) {
+      setFavorites([]);
+      return;
     }
-    return [];
-  });
 
-  const [favoriteServices, setFavoriteServices] = useState<SavedService[]>(() => {
-    const saved = localStorage.getItem('nexora_favorite_services');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse favorite services:', e);
+    const fetchFavorites = async () => {
+      const { data, error } = await supabase
+        .from('favorites')
+        .select('salon_id')
+        .eq('user_id', user.id);
+      
+      if (error) {
+        console.error('Error fetching favorites:', error);
+      } else {
+        setFavorites(data?.map((f: any) => f.salon_id) || []);
       }
-    }
-    return [];
-  });
+    };
 
-  const [bookings, setBookings] = useState<Booking[]>(() => {
-    const saved = localStorage.getItem('nexora_bookings');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch (e) {
-        console.error('Failed to parse saved bookings:', e);
-      }
+    fetchFavorites();
+
+    const favSub = supabase
+      .channel('public:favorites')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'favorites', filter: `user_id=eq.${user.id}` },
+        () => fetchFavorites()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(favSub);
+    };
+  }, [user?.id]);
+
+  const handleToggleFavorite = async (salonId: string) => {
+    if (!supabase || !user) return;
+
+    const isFav = favorites.includes(salonId);
+
+    if (isFav) {
+      // Optimistic update
+      setFavorites(prev => prev.filter(id => id !== salonId));
+      await supabase
+        .from('favorites')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('salon_id', salonId);
+    } else {
+      // Optimistic update
+      setFavorites(prev => [...prev, salonId]);
+      await supabase
+        .from('favorites')
+        .insert({ user_id: user.id, salon_id: salonId });
     }
-    return [];
-  });
+  };
+
+  const [recentlyViewed, setRecentlyViewed] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (profile) {
+      setRecentlyViewed((profile as any).recently_viewed || []);
+    }
+  }, [profile?.updated_at]);
+
+  const [favoriteProfessionals, setFavoriteProfessionals] = useState<SavedProfessional[]>([]);
+  const [favoriteServices, setFavoriteServices] = useState<SavedService[]>([]);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+
+  useEffect(() => {
+    if (!supabase || !user) {
+      setBookings([]);
+      return;
+    }
+
+    const fetchBookings = async () => {
+      // In a real app, you'd fetch from a 'bookings' table. 
+      // The current app uses RPC to create them. 
+      // I'll assume a 'bookings' table exists for syncing.
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('*')
+        .eq('customer_id', user.id)
+        .order('created_at', { ascending: false });
+      
+      if (!error && data) {
+        // Map DB rows to UI Booking type
+        setBookings(data.map((b: any) => ({
+           id: b.id,
+           salonId: b.salon_id,
+           salonName: b.salon_name,
+           services: b.services || [],
+           totalAmount: b.total_amount_paise / 100,
+           dateStr: b.date_str,
+           timeSlot: b.time_slot,
+           status: b.status,
+           staffName: b.staff_name,
+           locationArea: b.location_area,
+           createdTime: new Date(b.created_at).getTime()
+        })));
+      }
+    };
+
+    fetchBookings();
+
+    const bookingsSub = supabase
+      .channel('public:bookings')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'bookings', filter: `customer_id=eq.${user.id}` },
+        () => fetchBookings()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(bookingsSub);
+    };
+  }, [user?.id]);
 
   const [confirmedModalBooking, setConfirmedModalBooking] = useState<Booking | null>(null);
   const [initialBookingIdForBookings, setInitialBookingIdForBookings] = useState<string | undefined>(undefined);
@@ -465,7 +544,8 @@ export default function App() {
     };
   }, []);
 
-  // Sync state to localStorage
+  // Sync state to localStorage - REMOVED for unified database sync
+  /*
   useEffect(() => {
     localStorage.setItem('nexora_favorites', JSON.stringify(favorites));
   }, [favorites]);
@@ -489,6 +569,7 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('nexora_notifications', JSON.stringify(notifications));
   }, [notifications]);
+  */
 
   // Trigger push notification helper
   const triggerPushNotificationForBooking = (targetBookingId?: string) => {
@@ -534,14 +615,30 @@ export default function App() {
     );
   };
 
-  const handleSelectSalon = (salon: Salon) => {
+  const [recentlyViewed, setRecentlyViewed] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (profile) {
+      setRecentlyViewed((profile as any).recently_viewed || []);
+    }
+  }, [profile?.updated_at]);
+
+  const handleSelectSalon = async (salon: Salon) => {
     setSelectedSalon(salon);
     setSelectedServices(salon.services.length > 0 ? [salon.services[0]] : []);
     setSelectedStaff(salon.staff.length > 0 ? salon.staff[0] : null);
-    setRecentlyViewed((prev) => {
-      const filtered = prev.filter((id) => id !== salon.id);
-      return [salon.id, ...filtered].slice(0, 10);
-    });
+    
+    if (user && profile) {
+      const newRecentlyViewed = [salon.id, ...recentlyViewed.filter(id => id !== salon.id)].slice(0, 10);
+      setRecentlyViewed(newRecentlyViewed);
+      
+      // Sync to DB immediately for cross-device visibility
+      await supabase?.from('profiles').update({
+        recently_viewed: newRecentlyViewed,
+        updated_at: new Date().toISOString()
+      }).eq('id', user.id);
+    }
+    
     setCurrentScreen('salon-detail');
   };
 
@@ -703,6 +800,16 @@ export default function App() {
         return 'Help Home';
       case 'settings':
         return 'App Settings';
+      case 'owner-dashboard':
+        return 'Owner Dashboard';
+      case 'gp-dashboard':
+        return 'Partner Dashboard';
+      case 'terms':
+        return 'Terms & Conditions';
+      case 'privacy':
+        return 'Privacy Policy';
+      case 'cancellation':
+        return 'Refund Policy';
       default:
         return 'Nexora';
     }
@@ -715,7 +822,10 @@ export default function App() {
     currentScreen === 'favourites' ||
     currentScreen === 'saved-addresses' ||
     currentScreen === 'support' ||
-    currentScreen === 'settings';
+    currentScreen === 'settings' ||
+    currentScreen === 'terms' ||
+    currentScreen === 'privacy' ||
+    currentScreen === 'cancellation';
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   if (supabaseConfigError) {
@@ -935,17 +1045,17 @@ export default function App() {
             />
           )}
 
-          {currentScreen === 'rewards' && <RewardsScreen bookings={bookings} />}
+          {currentScreen === 'rewards' && <RewardsScreen profile={profile} bookings={bookings} />}
 
           {currentScreen === 'profile' && (
             <ProfileScreen
+              profile={profile}
               location={userLocation}
               favoritesCount={favorites.length}
               bookings={bookings}
               onNavigate={(s) => setCurrentScreen(s)}
               onBack={handleBack}
               onOpenLocation={() => setCurrentScreen('location-modal')}
-              onAvatarUpdate={(newAvatar) => setProfileAvatar(newAvatar)}
             />
           )}
 
@@ -965,6 +1075,7 @@ export default function App() {
 
           {currentScreen === 'settings' && (
             <SettingsScreen
+              profile={profile}
               onBack={handleBack}
               onNavigate={(s) => setCurrentScreen(s)}
               onLogout={async () => {
@@ -983,6 +1094,40 @@ export default function App() {
               }}
               onClose={() => setCurrentScreen('home')}
             />
+          )}
+
+          {currentScreen === 'owner-dashboard' && (
+            <OwnerDashboard 
+              user={user} 
+              onNavigate={setCurrentScreen}
+              onLogout={async () => {
+                setUser(null);
+                await supabase?.auth.signOut();
+              }}
+            />
+          )}
+
+          {currentScreen === 'gp-dashboard' && (
+            <GrowthPartnerDashboard 
+              user={user} 
+              onNavigate={setCurrentScreen}
+              onLogout={async () => {
+                setUser(null);
+                await supabase?.auth.signOut();
+              }}
+            />
+          )}
+
+          {currentScreen === 'terms' && (
+            <LegalScreen type="terms" onBack={handleBack} />
+          )}
+
+          {currentScreen === 'privacy' && (
+            <LegalScreen type="privacy" onBack={handleBack} />
+          )}
+
+          {currentScreen === 'cancellation' && (
+            <LegalScreen type="cancellation" onBack={handleBack} />
           )}
 
           {/* Safe Fallback for any unhandled screen state to prevent white screen */}

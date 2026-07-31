@@ -10,6 +10,7 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
     password: '',
     confirmPassword: '',
     mobile: '',
+    role: 'customer' as 'customer' | 'business_user' | 'growth_partner',
     termsAccepted: false,
   });
   const [showPassword, setShowPassword] = useState(false);
@@ -66,7 +67,7 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
           data: {
             full_name: formData.fullName,
             mobile: formData.mobile,
-            signup_role: 'customer',
+            signup_role: formData.role,
           },
         },
       });
@@ -76,22 +77,22 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
       } else {
         if (data.user) {
           try {
-            // Create or update the matching profile under the locked role
-            // contract: one email = one permanent role ('customer' here).
-            await supabase.from('profiles').upsert(
+            // Consistent profile creation for unified auth
+            const { error: profileError } = await supabase.from('profiles').upsert(
               {
                 id: data.user.id,
-                full_name: formData.fullName,
                 email: formData.email,
-                mobile: formData.mobile,
-                platform_role: 'customer',
+                full_name: formData.fullName,
+                phone: formData.mobile,
+                platform_role: formData.role,
                 is_active: true,
+                updated_at: new Date().toISOString(),
               },
               { onConflict: 'id' }
             );
+            if (profileError) console.error('Profile creation error:', profileError);
           } catch (pe) {
-            // Best effort only: the backend signup_role trigger is the
-            // authoritative profile creator when RLS blocks a pre-session upsert.
+            console.error('Profile upsert failed:', pe);
           }
         }
         alert('Registration submitted! Check your email for confirmation link.');
@@ -119,6 +120,19 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-[#26181c] ml-1">Account Role</label>
+            <select 
+              className="w-full bg-[#fcf9f8] border border-[#e8e8e8] rounded-xl px-4 py-3.5 text-sm text-[#26181c] focus:outline-none focus:border-[#e6007e] transition-colors" 
+              value={formData.role} 
+              onChange={(e) => setFormData({...formData, role: e.target.value as any})}
+            >
+              <option value="customer">Customer</option>
+              <option value="business_user">Shop Owner</option>
+              <option value="growth_partner">Growth Partner</option>
+            </select>
+          </div>
+
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-[#26181c] ml-1">Full Name</label>
             <input className="w-full bg-[#fcf9f8] border border-[#e8e8e8] rounded-xl px-4 py-3.5 text-sm text-[#26181c] focus:outline-none focus:border-[#e6007e] transition-colors" placeholder="e.g. Rahul Sharma" type="text" required onChange={(e) => setFormData({...formData, fullName: e.target.value})} />

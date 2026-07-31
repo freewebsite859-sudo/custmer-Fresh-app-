@@ -10,6 +10,7 @@ import { InstallApp } from './InstallApp';
 import { Modal } from './Modal';
 
 interface ProfileScreenProps {
+  profile: UserProfile | null;
   location: UserLocation;
   favoritesCount: number;
   bookings: Booking[];
@@ -52,6 +53,7 @@ const MenuItem: React.FC<MenuItemProps> = ({ icon, label, badge, onClick, isDest
 );
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
+  profile,
   location,
   favoritesCount,
   bookings,
@@ -64,24 +66,25 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     window.scrollTo(0, 0);
   }, []);
 
-  // Local states for customer profile
-  const [name, setName] = useState<string>(() => localStorage.getItem('profile_name') || 'Customer');
-  const [email, setEmail] = useState<string>(() => localStorage.getItem('profile_email') || '');
-  const [phone, setPhone] = useState<string>(() => localStorage.getItem('profile_phone') || '+91 98765 43210');
-  const [avatar, setAvatar] = useState<string>(() => localStorage.getItem('profile_avatar') || '/avatars/avatar-1.png');
-  const [selectedLanguage, setSelectedLanguage] = useState<string>(() => localStorage.getItem('profile_language') || 'English');
-  const [remindersEnabled, setRemindersEnabled] = useState<boolean>(() => localStorage.getItem('reminders_enabled') !== 'false');
-  const [autoPlayAmbiance, setAutoPlayAmbiance] = useState<boolean>(() => localStorage.getItem('autoplay_ambiance') === 'true');
-  const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => (localStorage.getItem('profile_theme') as 'light' | 'dark') || 'light');
-  
-  // Custom high fidelity profile details states
-  const [dob, setDob] = useState<string>(() => localStorage.getItem('profile_dob') || '1992-05-14');
-  const [gender, setGender] = useState<string>(() => localStorage.getItem('profile_gender') || 'female');
-  const [preferredCity, setPreferredCity] = useState<string>(() => localStorage.getItem('profile_city') || 'jaipur');
-  const [preferredArea, setPreferredArea] = useState<string>(() => localStorage.getItem('profile_area') || 'Jhotwara');
+  const name = profile?.full_name || 'Customer';
+  const email = profile?.email || '';
+  const phone = profile?.phone || '+91 98765 43210';
+  const avatar = profile?.photo_url || '/avatars/avatar-1.png';
+  const dob = profile?.dob || '1992-05-14';
+  const gender = profile?.gender || 'female';
+  const preferredCity = profile?.preferred_city || 'jaipur';
+  const preferredArea = profile?.preferred_area || 'Jhotwara';
 
+  // Settings from profile
+  const userSettings = (profile as any)?.user_settings || {};
+  const selectedLanguage = userSettings.language || 'English';
+  const remindersEnabled = userSettings.reminders_enabled !== false;
+  const autoPlayAmbiance = userSettings.autoplay_ambiance === true;
+  const themeMode = userSettings.theme || 'light';
+  
   // Modal open states
   const [isEditOpen, setIsEditOpen] = useState(false);
+  // ... (rest of states)
   const [isReferEarnOpen, setIsReferEarnOpen] = useState(false);
   const [isMembershipOpen, setIsMembershipOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
@@ -102,121 +105,83 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
   const [prefilledUpiInput, setPrefilledUpiInput] = useState<string>('');
 
-  const [savedCards, setSavedCards] = useState<SavedCard[]>(() => {
-    const saved = localStorage.getItem('nexora_saved_cards');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved cards:', e);
-      }
-    }
-    return [
-      {
-        id: 'card-1',
-        cardNumber: '•••• •••• •••• 4242',
-        cardHolder: 'PRIYA SHARMA',
-        expiry: '12/26',
-        network: 'visa',
-        isPrimary: true,
-      },
-      {
-        id: 'card-2',
-        cardNumber: '•••• •••• •••• 8810',
-        cardHolder: 'PRIYA SHARMA',
-        expiry: '09/25',
-        network: 'mastercard',
-        isPrimary: false,
-      },
-    ];
-  });
+  const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
+  const [savedUpis, setSavedUpis] = useState<SavedUpi[]>([]);
 
-  const [savedUpis, setSavedUpis] = useState<SavedUpi[]>(() => {
-    const saved = localStorage.getItem('nexora_saved_upis');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved upis:', e);
-      }
-    }
-    return [
-      {
-        id: 'upi-qr-1',
-        upiId: 'amelia.stratton@okicici',
-        name: 'Amelia Stratton',
-        provider: 'okicici',
-        isVerified: true,
-        isQrScanned: true,
-        scannedAt: 'Today, 2:15 PM',
-      },
-      {
-        id: 'upi-qr-2',
-        upiId: 'nexora.salon@paytm',
-        name: 'Nexora Salon Payments',
-        provider: 'paytm',
-        isVerified: true,
-        isQrScanned: true,
-        scannedAt: 'Yesterday',
-      },
-      {
-        id: 'upi-1',
-        upiId: 'amelia.strat@okaxis',
-        name: 'Amelia Stratton',
-        provider: 'okaxis',
-        isVerified: true,
-        isQrScanned: false,
-      },
-      {
-        id: 'upi-2',
-        upiId: '9876543210@paytm',
-        name: 'Amelia Stratton',
-        provider: 'paytm',
-        isVerified: true,
-        isQrScanned: false,
-      },
-    ];
-  });
-
-  // Reload saved upis when payment methods open
   useEffect(() => {
-    if (isPaymentMethodsOpen) {
-      const saved = localStorage.getItem('nexora_saved_upis');
-      if (saved) {
-        try {
-          setSavedUpis(JSON.parse(saved));
-        } catch (e) {
-          console.warn('Failed to parse saved upis:', e);
-        }
-      }
+    if (profile) {
+      fetchCards();
+      fetchUpis();
     }
-  }, [isPaymentMethodsOpen]);
+  }, [profile?.id]);
 
-  const handleCardAdded = (newCard: SavedCard) => {
-    const updated = [newCard, ...savedCards];
-    setSavedCards(updated);
-    localStorage.setItem('nexora_saved_cards', JSON.stringify(updated));
+  const fetchCards = async () => {
+    if (!supabase || !profile) return;
+    const { data } = await supabase.from('user_cards').select('*').eq('user_id', profile.id);
+    if (data) setSavedCards(data.map((c: any) => ({
+       id: c.id,
+       cardNumber: c.card_number,
+       cardHolder: c.card_holder,
+       expiry: c.expiry,
+       network: c.network,
+       isPrimary: c.is_primary
+    })));
+  };
+
+  const fetchUpis = async () => {
+    if (!supabase || !profile) return;
+    const { data } = await supabase.from('user_upis').select('*').eq('user_id', profile.id);
+    if (data) setSavedUpis(data.map((u: any) => ({
+       id: u.id,
+       upiId: u.upi_id,
+       name: u.name,
+       provider: u.provider,
+       isVerified: u.is_verified,
+       isQrScanned: u.is_qr_scanned,
+       scannedAt: u.scanned_at
+    })));
+  };
+
+  const handleCardAdded = async (newCard: SavedCard) => {
+    if (!supabase || !profile) return;
+    await supabase.from('user_cards').insert({
+       user_id: profile.id,
+       card_number: newCard.cardNumber,
+       card_holder: newCard.cardHolder,
+       expiry: newCard.expiry,
+       network: newCard.network,
+       is_primary: newCard.isPrimary
+    });
+    fetchCards();
     triggerToast('Card saved successfully!');
   };
 
-  const handleDeleteCard = (cardId: string) => {
-    const updated = savedCards.filter((c) => c.id !== cardId);
-    setSavedCards(updated);
-    localStorage.setItem('nexora_saved_cards', JSON.stringify(updated));
+  const handleDeleteCard = async (cardId: string) => {
+    if (!supabase) return;
+    await supabase.from('user_cards').delete().eq('id', cardId);
+    fetchCards();
     triggerToast('Card removed');
   };
 
-  const handleUpiAdded = (newUpi: SavedUpi) => {
-    const updated = [newUpi, ...savedUpis];
-    setSavedUpis(updated);
-    localStorage.setItem('nexora_saved_upis', JSON.stringify(updated));
+  const handleUpiAdded = async (newUpi: SavedUpi) => {
+    if (!supabase || !profile) return;
+    await supabase.from('user_upis').insert({
+       user_id: profile.id,
+       upi_id: newUpi.upiId,
+       name: newUpi.name,
+       provider: newUpi.provider,
+       is_verified: newUpi.isVerified,
+       is_qr_scanned: newUpi.isQrScanned,
+       scanned_at: newUpi.scannedAt
+    });
+    fetchUpis();
     triggerToast('UPI ID linked successfully!');
   };
 
-  const handleDeleteUpi = (upiId: string) => {
-    const updated = savedUpis.filter((u) => u.id !== upiId);
-    setSavedUpis(updated);
-    localStorage.setItem('nexora_saved_upis', JSON.stringify(updated));
+  const handleDeleteUpi = async (upiId: string) => {
+    if (!supabase) return;
+    await supabase.from('user_upis').delete().eq('id', upiId);
+    fetchUpis();
     triggerToast('UPI ID removed');
   };
 
@@ -255,49 +220,28 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [addressView, setAddressView] = useState<'list' | 'add' | 'edit'>('list');
   const [selectedAddressForEdit, setSelectedAddressForEdit] = useState<Address | null>(null);
 
-  const [savedAddresses, setSavedAddresses] = useState<Address[]>(() => {
-    const saved = localStorage.getItem('nexora_saved_addresses');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved addresses:', e);
-      }
-    }
-    return [
-      {
-        id: 'addr-1',
-        label: 'Home',
-        flatNumber: 'Apt 4B, 4th Floor',
-        street: 'Hill Road, Bandra West',
-        landmark: 'Opposite Elco Arcade',
-        city: 'Mumbai',
-        pincode: '400050',
-        isDefault: true,
-      },
-      {
-        id: 'addr-2',
-        label: 'Office',
-        flatNumber: 'Godrej One, 3rd Floor',
-        street: 'Vikhroli East',
-        landmark: 'Near Eastern Express Highway',
-        city: 'Mumbai',
-        pincode: '400079',
-        isDefault: false,
-      }
-    ];
-  });
+  const [savedAddresses, setSavedAddresses] = useState<Address[]>([]);
 
-  React.useEffect(() => {
-    const saved = localStorage.getItem('nexora_saved_addresses');
-    if (saved) {
-      try {
-        setSavedAddresses(JSON.parse(saved));
-      } catch (e) {
-        console.error(e);
-      }
+  useEffect(() => {
+    if (profile) {
+      fetchAddresses();
     }
-  }, []);
+  }, [profile?.id]);
+
+  const fetchAddresses = async () => {
+    if (!supabase || !profile) return;
+    const { data } = await supabase.from('user_addresses').select('*').eq('user_id', profile.id).order('is_default', { ascending: false });
+    if (data) setSavedAddresses(data.map((a: any) => ({
+       id: a.id,
+       label: a.label,
+       flatNumber: a.flat_number,
+       street: a.street,
+       landmark: a.landmark,
+       city: a.city,
+       pincode: a.pincode,
+       isDefault: a.is_default
+    })));
+  };
 
   // Form states for adding/editing addresses
   const [formLabel, setFormLabel] = useState<string>('Home');
@@ -346,50 +290,64 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     setNameError(null);
     setIsSavingProfile(true);
 
-    setName(tempName);
-    setEmail(tempEmail);
-    setPhone(tempPhone);
-    setAvatar(tempAvatar);
-    setDob(tempDob);
-    setGender(tempGender);
-    setPreferredCity(tempCity);
-    setPreferredArea(tempArea);
-
-    localStorage.setItem('profile_name', tempName);
-    localStorage.setItem('profile_email', tempEmail);
-    localStorage.setItem('profile_phone', tempPhone);
-    localStorage.setItem('profile_avatar', tempAvatar);
-    localStorage.setItem('profile_dob', tempDob);
-    localStorage.setItem('profile_gender', tempGender);
-    localStorage.setItem('profile_city', tempCity);
-    localStorage.setItem('profile_area', tempArea);
-
-    if (onAvatarUpdate) {
-      onAvatarUpdate(tempAvatar);
-    }
-
-    // Best-effort cloud sync — only columns that exist in the profiles schema
-    // (full_name, mobile). Never overwrite platform_role or other fields.
-    let synced = false;
     try {
-      if (supabase) {
-        const { data } = await supabase.auth.getSession();
-        const user = data.session?.user;
-        if (user) {
-          const { error } = await supabase.from('profiles').upsert(
-            { id: user.id, full_name: tempName.trim(), mobile: tempPhone.trim() || null },
-            { onConflict: 'id' }
-          );
-          synced = !error;
-        }
-      }
-    } catch {
-      synced = false;
-    }
+      if (!supabase || !profile) throw new Error('Not authenticated');
 
-    setIsSavingProfile(false);
-    setIsEditOpen(false);
-    triggerToast(synced ? 'Profile updated & synced to your account.' : 'Profile updated on this device.');
+      let photoUrl = tempAvatar;
+
+      // If tempAvatar is a base64 string (new upload), upload to storage
+      if (tempAvatar.startsWith('data:image')) {
+        const fileExt = tempAvatar.split(';')[0].split('/')[1];
+        const fileName = `${profile.id}-${Math.random()}.${fileExt}`;
+        const filePath = `avatars/${fileName}`;
+
+        // Convert base64 to Blob
+        const base64Data = tempAvatar.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: `image/${fileExt}` });
+
+        const { error: uploadError } = await supabase.storage
+          .from('avatars')
+          .upload(filePath, blob);
+
+        if (uploadError) throw uploadError;
+
+        const { data: publicUrlData } = supabase.storage
+          .from('avatars')
+          .getPublicUrl(filePath);
+        
+        photoUrl = publicUrlData.publicUrl;
+      }
+
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          full_name: tempName.trim(),
+          phone: tempPhone.trim(),
+          photo_url: photoUrl,
+          dob: tempDob,
+          gender: tempGender,
+          preferred_city: tempCity,
+          preferred_area: tempArea,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', profile.id);
+
+      if (error) throw error;
+      
+      triggerToast('Profile updated successfully!');
+      setIsEditOpen(false);
+    } catch (err: any) {
+      console.error('Error saving profile:', err);
+      triggerToast(`Failed to update profile: ${err.message}`);
+    } finally {
+      setIsSavingProfile(false);
+    }
   };
 
   // Real GPS detection — reverse-geocodes to city/area and fills the form.
@@ -559,76 +517,52 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     setAddressView('edit');
   };
 
-  const handleDeleteAddress = (addrId: string) => {
-    const updated = savedAddresses.filter((a) => a.id !== addrId);
-    if (updated.length > 0 && !updated.some((a) => a.isDefault)) {
-      updated[0].isDefault = true;
-    }
-    setSavedAddresses(updated);
-    localStorage.setItem('nexora_saved_addresses', JSON.stringify(updated));
+  const handleDeleteAddress = async (addrId: string) => {
+    if (!supabase) return;
+    await supabase.from('user_addresses').delete().eq('id', addrId);
+    fetchAddresses();
     triggerToast('Address deleted successfully!');
   };
 
-  const handleSetDefaultAddress = (addrId: string) => {
-    const updated = savedAddresses.map((a) => ({
-      ...a,
-      isDefault: a.id === addrId,
-    }));
-    setSavedAddresses(updated);
-    localStorage.setItem('nexora_saved_addresses', JSON.stringify(updated));
+  const handleSetDefaultAddress = async (addrId: string) => {
+    if (!supabase || !profile) return;
+    await supabase.from('user_addresses').update({ is_default: false }).eq('user_id', profile.id);
+    await supabase.from('user_addresses').update({ is_default: true }).eq('id', addrId);
+    fetchAddresses();
     triggerToast('Default address updated!');
   };
 
-  const handleSaveAddressForm = () => {
+  const handleSaveAddressForm = async () => {
+    if (!supabase || !profile) return;
     if (!formFlat.trim() || !formStreet.trim() || !formPincode.trim()) {
       triggerToast('Please fill in House/Flat No, Street, and PIN Code.');
       return;
     }
 
-    let updatedList: Address[] = [];
+    const data = {
+      user_id: profile.id,
+      label: formLabel,
+      flat_number: formFlat,
+      street: formStreet,
+      landmark: formLandmark,
+      city: formCity,
+      pincode: formPincode,
+      is_default: formIsDefault || savedAddresses.length === 0
+    };
 
-    if (addressView === 'add') {
-      const newAddr: Address = {
-        id: `addr-${Date.now()}`,
-        label: formLabel,
-        flatNumber: formFlat,
-        street: formStreet,
-        landmark: formLandmark,
-        city: formCity,
-        pincode: formPincode,
-        isDefault: formIsDefault || savedAddresses.length === 0,
-      };
-
-      if (newAddr.isDefault) {
-        updatedList = savedAddresses.map((a) => ({ ...a, isDefault: false }));
-        updatedList.push(newAddr);
-      } else {
-        updatedList = [...savedAddresses, newAddr];
-      }
-      triggerToast('Address added successfully!');
-    } else {
-      // Edit mode
-      if (!selectedAddressForEdit) return;
-      updatedList = savedAddresses.map((a) => {
-        if (a.id === selectedAddressForEdit.id) {
-          return {
-            ...a,
-            label: formLabel,
-            flatNumber: formFlat,
-            street: formStreet,
-            landmark: formLandmark,
-            city: formCity,
-            pincode: formPincode,
-            isDefault: formIsDefault,
-          };
-        }
-        return formIsDefault ? { ...a, isDefault: false } : a;
-      });
-      triggerToast('Address updated successfully!');
+    if (formIsDefault) {
+      await supabase.from('user_addresses').update({ is_default: false }).eq('user_id', profile.id);
     }
 
-    setSavedAddresses(updatedList);
-    localStorage.setItem('nexora_saved_addresses', JSON.stringify(updatedList));
+    if (addressView === 'add') {
+      await supabase.from('user_addresses').insert(data);
+    } else {
+      if (!selectedAddressForEdit) return;
+      await supabase.from('user_addresses').update(data).eq('id', selectedAddressForEdit.id);
+    }
+
+    fetchAddresses();
+    triggerToast(addressView === 'add' ? 'Address added!' : 'Address updated!');
     setAddressView('list');
   };
 
@@ -976,12 +910,17 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <MenuItem
               icon="policy"
               label="Privacy Policy"
-              onClick={() => setIsPolicyOpen(true)}
+              onClick={() => onNavigate('privacy')}
             />
             <MenuItem
               icon="gavel"
               label="Terms & Conditions"
-              onClick={() => setIsTermsOpen(true)}
+              onClick={() => onNavigate('terms')}
+            />
+            <MenuItem
+              icon="receipt_long"
+              label="Cancellation & Refunds"
+              onClick={() => onNavigate('cancellation')}
             />
           </div>
         </div>
@@ -1170,41 +1109,39 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 </div>
               </div>
 
-              {/* Email Address (Read-only) */}
-              <div className="flex flex-col gap-1.5">
-                <div className="flex justify-between items-center ml-1">
-                  <label className="text-[12px] font-bold text-[#594047]" htmlFor="email">Email Address</label>
-                  <div className="flex items-center gap-1 px-2 py-0.5 bg-[#E8F5E9] text-[#2E7D32] rounded-full text-[10px] font-extrabold tracking-wide uppercase shadow-xs">
-                    <span className="material-symbols-outlined text-[11px] font-bold">check_circle</span>
-                    Verified
-                  </div>
+            {/* Email Address (Read-only) */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex justify-between items-center ml-1">
+                <label className="text-[12px] font-bold text-[#594047]" htmlFor="email">Email Address</label>
+                <div className="flex items-center gap-1 px-2 py-0.5 bg-[#E8F5E9] text-[#2E7D32] rounded-full text-[10px] font-extrabold tracking-wide uppercase shadow-xs">
+                  <span className="material-symbols-outlined text-[11px] font-bold">check_circle</span>
+                  Verified
                 </div>
-                <div className="relative flex items-center">
-                  <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#8c7077] text-[20px] pointer-events-none">mail</span>
-                  <input
-                    id="email"
-                    type="email"
-                    value={editFormEmail}
-                    readOnly
-                    className="w-full h-12 bg-[#ffe8ed]/30 text-[14px] text-[#594047] rounded-xl pl-11 pr-11 border border-[#e8e8e8] opacity-70 cursor-not-allowed"
-                  />
-                  <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-[#8c7077] text-[18px] pointer-events-none">lock</span>
-                </div>
-                <p className="text-[11px] text-[#8c7077]/80 ml-1 leading-normal">
-                  Email cannot be changed directly for security purposes.{' '}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsSupportOpen(true);
-                      setIsEditOpen(false);
-                      handleSendSupportMessage('Hi, I would like to request an email update for my profile.');
-                    }}
-                    className="text-[#b90064] font-bold hover:underline cursor-pointer"
-                  >
-                    Contact support to update.
-                  </button>
-                </p>
               </div>
+              <div className="relative flex items-center">
+                <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#8c7077] text-[20px] pointer-events-none">mail</span>
+                <input
+                  id="email"
+                  type="email"
+                  value={email}
+                  readOnly
+                  className="w-full h-12 bg-[#ffe8ed]/30 text-[14px] text-[#594047] rounded-xl pl-11 pr-11 border border-[#e8e8e8] opacity-70 cursor-not-allowed"
+                />
+                <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-[#8c7077] text-[18px] pointer-events-none">lock</span>
+              </div>
+              <p className="text-[11px] text-[#8c7077]/80 ml-1 leading-normal">
+                Email cannot be changed directly for security purposes.{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onNavigate('support');
+                  }}
+                  className="text-[#b90064] font-bold hover:underline cursor-pointer"
+                >
+                  Contact support to update.
+                </button>
+              </p>
+            </div>
             </div>
 
             {/* Personal Details Card */}
@@ -1941,9 +1878,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           ].map((l, i) => (
             <button
               key={i}
-              onClick={() => {
-                setSelectedLanguage(l.name);
-                localStorage.setItem('profile_language', l.name);
+              onClick={async () => {
+                if (!supabase || !profile) return;
+                const newSettings = { ...(profile as any).user_settings, language: l.name };
+                await supabase.from('profiles').update({ user_settings: newSettings }).eq('id', profile.id);
                 setIsLanguageOpen(false);
                 triggerToast(`App language updated to ${l.name}!`);
               }}
