@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Salon, Screen, UserLocation, Booking } from '../types';
-import { BANNER_URL, INITIAL_BOOKINGS } from '../data/mockData';
+import { BANNER_URL } from '../data/mockData';
 import { SalonCardSkeleton } from './Skeleton';
 import { OfflineDashboardCard } from './OfflineDashboardCard';
 import { SmartSearchFilterBar } from './SmartSearchFilterBar';
@@ -105,7 +105,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     } catch (e) {
       console.error('Failed reading bookings', e);
     }
-    return INITIAL_BOOKINGS;
+    return [];
   }, [bookings]);
 
   // Analysis Logic Block 1: Frequent Services from User Booking History
@@ -146,48 +146,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     });
 
     const sorted = Array.from(serviceMap.values()).sort((a, b) => b.count - a.count);
-
-    // If user has few distinct services in history, supplement with curated top frequent services
-    if (sorted.length < 3) {
-      const fallbackFrequent = [
-        {
-          serviceName: 'HydraGlow Facial',
-          category: 'Skin',
-          count: 2,
-          avgPrice: 1499,
-          durationMinutes: 60,
-          lastSalonName: salons[0]?.name || 'Aura Premium Salon',
-          lastSalonId: salons[0]?.id || '1',
-          lastBookedDate: 'Jul 20',
-        },
-        {
-          serviceName: 'Keratin Hair Spa',
-          category: 'Hair',
-          count: 2,
-          avgPrice: 1299,
-          durationMinutes: 45,
-          lastSalonName: salons[1]?.name || 'Elegance Hair Studio',
-          lastSalonId: salons[1]?.id || '2',
-          lastBookedDate: 'Jul 15',
-        },
-        {
-          serviceName: 'Gel Polish Nail Art',
-          category: 'Nails',
-          count: 1,
-          avgPrice: 899,
-          durationMinutes: 30,
-          lastSalonName: salons[2]?.name || 'The Gentlemen\'s Cut',
-          lastSalonId: salons[2]?.id || '3',
-          lastBookedDate: 'Jul 10',
-        },
-      ];
-
-      fallbackFrequent.forEach((item) => {
-        if (!sorted.some((s) => s.serviceName.toLowerCase() === item.serviceName.toLowerCase())) {
-          sorted.push(item);
-        }
-      });
-    }
 
     return sorted;
   }, [userBookings, salons]);
@@ -722,6 +680,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               exit="exit"
               className="flex gap-3 overflow-x-auto pt-2 pb-1 scrollbar-none -mx-4 px-4 sm:-mx-5 sm:px-5 scroll-smooth snap-x snap-mandatory"
             >
+              {frequentServices.length === 0 && (
+                <div className="w-full shrink-0 flex flex-col items-center justify-center text-center py-8 px-6 gap-2">
+                  <span className="material-symbols-outlined text-[28px] text-[#e0bec6]">history</span>
+                  <p className="text-[13px] font-semibold text-[#8c7077] leading-5">
+                    Your frequently booked services will appear here after your first appointment.
+                  </p>
+                </div>
+              )}
               {frequentServices.map((item, idx) => {
                 const matchedSalon = salons.find((s) => s.id === item.lastSalonId) || salons[0];
                 return (

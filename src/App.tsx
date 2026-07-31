@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import { supabase, supabaseConfigError } from './lib/supabaseClient';
 import { Screen, Salon, Service, Staff, Booking, UserLocation, AppNotification, ServiceReview, SavedProfessional, SavedService } from './types';
 import {
-  INITIAL_BOOKINGS,
   INITIAL_LOCATION,
 } from './data/mockData';
 import { fetchPublicSalons } from './lib/salonRepository';
@@ -225,7 +224,7 @@ export default function App() {
         console.error('Failed to parse favorites:', e);
       }
     }
-    return ['aura-premium', 'glam-room'];
+    return [];
   });
 
   const [recentlyViewed, setRecentlyViewed] = useState<string[]>(() => {
@@ -237,7 +236,7 @@ export default function App() {
         console.error('Failed to parse recently viewed:', e);
       }
     }
-    return ['aura-premium', 'glam-room'];
+    return [];
   });
 
   useEffect(() => {
@@ -253,28 +252,7 @@ export default function App() {
         console.error('Failed to parse favorite professionals:', e);
       }
     }
-    return [
-      {
-        id: 'pro-1',
-        salonId: 'aura-premium',
-        name: 'Maya S.',
-        role: 'Senior Hair Stylist',
-        rating: 4.9,
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-        salonName: 'Aura Premium Salon',
-        skills: ['Haircut', 'Balayage', 'Coloring']
-      },
-      {
-        id: 'pro-2',
-        salonId: 'glam-room',
-        name: 'Arjun K.',
-        role: 'Master Grooming Expert',
-        rating: 4.8,
-        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-        salonName: 'The Glam Room',
-        skills: ['Beard Styling', 'Fade Haircut']
-      }
-    ];
+    return [];
   });
 
   const [favoriteServices, setFavoriteServices] = useState<SavedService[]>(() => {
@@ -286,26 +264,7 @@ export default function App() {
         console.error('Failed to parse favorite services:', e);
       }
     }
-    return [
-      {
-        id: 'srv-1',
-        salonId: 'aura-premium',
-        name: "Woman's Haircut & Blowdry",
-        durationMinutes: 45,
-        price: 899,
-        salonName: 'Aura Premium Salon',
-        category: 'Hair Styling'
-      },
-      {
-        id: 'srv-2',
-        salonId: 'luxe-spa',
-        name: 'Deep Cleansing Facial Glow',
-        durationMinutes: 60,
-        price: 1499,
-        salonName: 'Luxe Botanicals & Spa',
-        category: 'Skincare'
-      }
-    ];
+    return [];
   });
 
   const [bookings, setBookings] = useState<Booking[]>(() => {
@@ -318,7 +277,7 @@ export default function App() {
         console.error('Failed to parse saved bookings:', e);
       }
     }
-    return INITIAL_BOOKINGS;
+    return [];
   });
 
   const [confirmedModalBooking, setConfirmedModalBooking] = useState<Booking | null>(null);
@@ -334,20 +293,7 @@ export default function App() {
         console.error('Failed to parse notifications:', e);
       }
     }
-    return [
-      {
-        id: 'notif-init-1',
-        bookingId: 'bk-101',
-        salonName: 'Aura Premium Salon',
-        timeSlot: '11:00 AM',
-        dateStr: 'Sat, 28 Jul',
-        servicesSummary: 'Balayage & Hair Styling',
-        timestamp: Date.now() - 300000,
-        read: false,
-        type: 'reminder_1h',
-        message: 'Your appointment at Aura Premium Salon starts in 1 hour at 11:00 AM!',
-      },
-    ];
+    return [];
   });
 
   const [activePushOverlay, setActivePushOverlay] = useState<AppNotification | null>(null);

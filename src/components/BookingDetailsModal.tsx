@@ -19,9 +19,6 @@ export const BookingDetailsModal: React.FC<BookingDetailsModalProps> = ({
   onCancel,
   salons = [],
 }) => {
-  const [isRescheduling, setIsRescheduling] = useState(false);
-  const [selectedRescheduleDate, setSelectedRescheduleDate] = useState('Fri, 25 Jul');
-  const [selectedRescheduleTime, setSelectedRescheduleTime] = useState('04:30 PM');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -54,10 +51,6 @@ export const BookingDetailsModal: React.FC<BookingDetailsModalProps> = ({
     triggerToast(`Connecting to ${booking.salonName} front desk...`);
   };
 
-  const handleRescheduleSubmit = () => {
-    triggerToast(`Appointment rescheduled to ${selectedRescheduleDate} at ${selectedRescheduleTime}`);
-    setIsRescheduling(false);
-  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -255,66 +248,6 @@ export const BookingDetailsModal: React.FC<BookingDetailsModalProps> = ({
               </div>
             </div>
           </div>
-
-          {/* Reschedule Drawer inside Modal if activated */}
-          {isRescheduling && (
-            <div className="bg-[#fff0f2] rounded-2xl p-4 border-2 border-[#e6007e] space-y-3 animate-in fade-in">
-              <div className="flex items-center justify-between">
-                <h5 className="font-bold text-xs text-[#26181c] uppercase tracking-wider">Select New Date & Slot</h5>
-                <button
-                  onClick={() => setIsRescheduling(false)}
-                  className="text-xs text-[#e6007e] font-bold hover:underline"
-                >
-                  Cancel
-                </button>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold text-[#5a3f47] block mb-1">New Date</label>
-                <div className="flex gap-2 overflow-x-auto pb-1">
-                  {['Fri, 25 Jul', 'Sat, 26 Jul', 'Sun, 27 Jul', 'Mon, 28 Jul'].map((d) => (
-                    <button
-                      key={d}
-                      onClick={() => setSelectedRescheduleDate(d)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-all ${
-                        selectedRescheduleDate === d
-                          ? 'bg-[#e6007e] text-white shadow-xs'
-                          : 'bg-white text-[#26181c] border border-[#fcd5e8]'
-                      }`}
-                    >
-                      {d}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold text-[#5a3f47] block mb-1">New Time Slot</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {['11:00 AM', '02:30 PM', '04:30 PM', '06:00 PM', '07:30 PM'].map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => setSelectedRescheduleTime(t)}
-                      className={`py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
-                        selectedRescheduleTime === t
-                          ? 'bg-[#e6007e] text-white shadow-xs'
-                          : 'bg-white text-[#26181c] border border-[#fcd5e8]'
-                      }`}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <button
-                onClick={handleRescheduleSubmit}
-                className="w-full py-2.5 bg-[#e6007e] text-white rounded-xl font-bold text-xs shadow-md active:scale-95 cursor-pointer mt-2"
-              >
-                Confirm New Appointment
-              </button>
-            </div>
-          )}
         </main>
 
         {/* Action Footer */}
@@ -327,15 +260,7 @@ export const BookingDetailsModal: React.FC<BookingDetailsModalProps> = ({
             Book Again
           </button>
 
-          <div className="grid grid-cols-2 gap-2.5">
-            <button
-              onClick={() => setIsRescheduling(!isRescheduling)}
-              className="h-[44px] rounded-full font-bold text-xs border border-[#fcd5e8] bg-[#fcf9f8] hover:bg-[#fde7f3] text-[#26181c] active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5"
-            >
-              <span className="material-symbols-outlined text-[16px] text-[#e6007e]">edit_calendar</span>
-              Reschedule
-            </button>
-
+          <div className="grid grid-cols-1 gap-2.5">
             {booking.status !== 'CANCELLED' && booking.status !== 'COMPLETED' ? (
               <button
                 onClick={() => onCancel(booking)}

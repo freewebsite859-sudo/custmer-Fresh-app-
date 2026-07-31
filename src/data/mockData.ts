@@ -1,4 +1,4 @@
-import { Booking, UserLocation } from '../types';
+import { UserLocation } from '../types';
 
 export const LOGO_URL = '/src/assets/images/nexora_logo_luxury_1785236781115.jpg';
 export const LOGO_SQUARE = '/src/assets/images/nexora_logo_luxury_1785236781115.jpg';
@@ -26,54 +26,4 @@ export const RECENT_LOCATIONS = [
   { area: 'Malviya Nagar', cityState: 'Jaipur, Rajasthan' },
   { area: 'Bandra West', cityState: 'Mumbai, Maharashtra' },
   { area: 'Koramangala', cityState: 'Bengaluru, Karnataka' },
-];
-
-
-export const INITIAL_BOOKINGS: Booking[] = [
-  {
-    id: 'bk-99',
-    salonId: 'aura-premium',
-    salonName: 'Aura Premium Salon',
-    services: [
-      { id: 'a1', name: "Woman's Haircut & Blowdry", durationMinutes: 45, price: 899, category: 'Hair Styling' },
-    ],
-    totalAmount: 899,
-    dateStr: 'Sun, 21 Jul',
-    timeSlot: '03:00 PM',
-    status: 'COMPLETED',
-    staffName: 'Maya S.',
-    locationArea: 'Indiranagar, Bangalore',
-    createdTime: Date.now() - 345600000,
-    isReviewed: false,
-  },
-  {
-    id: 'bk-101',
-    salonId: 'aura-premium',
-    salonName: 'Aura Premium Salon',
-    services: [
-      { id: 'a2', name: 'Balayage & Styling', durationMinutes: 120, price: 3499, category: 'Hair Styling' },
-    ],
-    totalAmount: 3499,
-    dateStr: 'Sat, 28 Jul',
-    timeSlot: '11:00 AM',
-    status: 'CONFIRMED',
-    staffName: 'Maya S.',
-    locationArea: 'Indiranagar, Bangalore',
-    createdTime: Date.now() - 86400000,
-  },
-  {
-    id: 'bk-102',
-    salonId: 'lumiere-studio',
-    salonName: 'Lumiere Studio',
-    services: [
-      { id: 'l2', name: 'Classic Manicure', durationMinutes: 30, price: 650, category: 'Nails' },
-    ],
-    totalAmount: 650,
-    dateStr: 'Tue, 15 Aug',
-    timeSlot: '2:30 PM',
-    status: 'PENDING',
-    staffName: 'Zara M.',
-    locationArea: 'Bandra West, Mumbai',
-    createdTime: Date.now() - 43200000,
-  },
 ];
