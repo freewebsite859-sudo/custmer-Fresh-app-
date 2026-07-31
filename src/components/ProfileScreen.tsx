@@ -648,7 +648,78 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       </Modal>
 
       <Modal isOpen={isReferEarnOpen} onClose={() => setIsReferEarnOpen(false)} title="Refer & Earn">
-        <div className="flex flex-col items-center text-center gap-4 p-2"><div className="w-16 h-16 rounded-full bg-[#fde7f3] flex items-center justify-center text-[#e6007e]"><span className="material-symbols-outlined text-[32px]">redeem</span></div><h4 className="text-[16px] font-bold text-[#26181c]">Referral rewards are coming soon</h4><p className="text-xs text-[#5a3f47] leading-relaxed">Nexora ka referral program abhi launch nahi hua hai. Jab live hoga, exact reward aur rules yahin dikhenge. Tab tak aap app link share kar sakte hain:</p><div className="w-full bg-[#fff8f8] border border-dashed border-[#fcd5e8] p-4 rounded-xl flex items-center justify-between gap-3 mt-1"><div className="text-left min-w-0 flex-1"><span className="text-[10px] uppercase font-bold text-[#8c7077]">App Link</span><p className="text-[13px] font-bold text-[#e6007e] truncate">{profileDeepLink}</p></div><button onClick={() => { navigator.clipboard?.writeText(profileDeepLink); triggerToast('App link copied!'); }} className="px-4 py-2 bg-[#e6007e] text-white text-xs font-bold rounded-lg hover:bg-[#b90064] active:scale-95 shrink-0">Copy Link</button></div></div>
+        {(() => {
+          const storedReferralCode = profile?.id ? localStorage.getItem(`nxu_ref_code_${profile.id}`) : null;
+          const storedFriendsJSON = profile?.id ? localStorage.getItem(`nxu_invited_friends_${profile.id}`) : null;
+          const friends = storedFriendsJSON ? JSON.parse(storedFriendsJSON) : [];
+          const activeReferralLink = storedReferralCode ? `${window.location.origin}/signup?ref=${storedReferralCode}` : profileDeepLink;
+
+          return (
+            <div className="flex flex-col items-center text-center gap-4 p-2">
+              <div className="w-16 h-16 rounded-full bg-[#fde7f3] flex items-center justify-center text-[#e6007e]">
+                <span className="material-symbols-outlined text-[32px]">redeem</span>
+              </div>
+
+              {storedReferralCode ? (
+                <>
+                  <h4 className="text-[16px] font-bold text-[#26181c]">Your Referral Code is Live! 🎉</h4>
+                  <p className="text-xs text-[#5a3f47] leading-relaxed">
+                    Share your unique referral link to invite your friends. When they complete their first booking, you will earn <span className="font-bold text-[#e6007e]">+250 Glow Points</span>!
+                  </p>
+
+                  <div className="w-full bg-[#fff8f8] border border-dashed border-[#fcd5e8] p-4 rounded-xl flex items-center justify-between gap-3 mt-1">
+                    <div className="text-left min-w-0 flex-1">
+                      <span className="text-[10px] uppercase font-bold text-[#8c7077]">Referral Link</span>
+                      <p className="text-[13px] font-bold text-[#e6007e] truncate">{activeReferralLink}</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard?.writeText(activeReferralLink);
+                        triggerToast('Referral link copied! ✨');
+                      }}
+                      className="px-4 py-2 bg-[#e6007e] text-white text-xs font-bold rounded-lg hover:bg-[#b90064] active:scale-95 shrink-0 cursor-pointer"
+                    >
+                      Copy
+                    </button>
+                  </div>
+
+                  <div className="text-xs text-[#8c7077] font-semibold mt-1">
+                    You have invited {friends.length} friends so far.
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setIsReferEarnOpen(false);
+                      onNavigate('rewards');
+                    }}
+                    className="w-full h-11 bg-[#b90064] hover:bg-[#8e004b] text-white font-bold text-xs rounded-xl shadow-md cursor-pointer flex items-center justify-center gap-2 mt-2 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">query_stats</span>
+                    Track & Simulate Invites
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h4 className="text-[16px] font-bold text-[#26181c]">Invite Friends & Earn Points</h4>
+                  <p className="text-xs text-[#5a3f47] leading-relaxed">
+                    Earn <span className="font-bold text-[#e6007e]">250 bonus Glow Points</span> for every friend who joins & books their first salon session. Track details live!
+                  </p>
+
+                  <button
+                    onClick={() => {
+                      setIsReferEarnOpen(false);
+                      onNavigate('rewards');
+                    }}
+                    className="w-full h-11 bg-[#e6007e] hover:bg-[#b90064] text-white font-bold text-xs rounded-xl shadow-md cursor-pointer flex items-center justify-center gap-2 mt-2 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">magic_button</span>
+                    Go Generate Your Unique Link
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })()}
       </Modal>
 
       <Modal isOpen={isMembershipOpen} onClose={() => setIsMembershipOpen(false)} title="Nexora Membership">

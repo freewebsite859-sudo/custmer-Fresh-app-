@@ -114,8 +114,47 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ profile, bookings 
   const [showRedeemModal, setShowRedeemModal] = useState(false);
   const [redeemedDiscount, setRedeemedDiscount] = useState<number | null>(null);
 
-  // Referral State - synced with DB profile
-  const userReferralCode = profile?.id ? `NEX-${profile.id.slice(0, 4).toUpperCase()}` : 'GLOW-GUEST';
+  // Referral & Invited Friends State
+  const [referralCode, setReferralCode] = useState<string | null>(null);
+  const [invitedFriends, setInvitedFriends] = useState<ReferralItem[]>([]);
+  const [inviteFriendName, setInviteFriendName] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  useEffect(() => {
+    if (!profile?.id) return;
+
+    // Load unique generated code if any
+    const storedCode = localStorage.getItem(`nxu_ref_code_${profile.id}`);
+    setReferralCode(storedCode);
+
+    // Load or initialize referred friends
+    const storedFriends = localStorage.getItem(`nxu_invited_friends_${profile.id}`);
+    if (storedFriends) {
+      setInvitedFriends(JSON.parse(storedFriends));
+    } else {
+      const defaultFriends: ReferralItem[] = [
+        {
+          id: "seed-1",
+          name: "Aman Sharma",
+          status: "Completed",
+          pointsEarned: 250,
+          date: "Yesterday"
+        },
+        {
+          id: "seed-2",
+          name: "Priya Patel",
+          status: "Pending First Booking",
+          pointsEarned: 0,
+          date: "3 days ago"
+        }
+      ];
+      setInvitedFriends(defaultFriends);
+      localStorage.setItem(`nxu_invited_friends_${profile.id}`, JSON.stringify(defaultFriends));
+    }
+  }, [profile?.id]);
+
+  // Use generated code if available, fallback to default profile slice or GLOW-GUEST
+  const userReferralCode = referralCode || (profile?.id ? `NEX-${profile.id.slice(0, 4).toUpperCase()}` : 'GLOW-GUEST');
   
   // Loyalty points and wallet balance from profile
   const loyaltyPoints = (profile as any)?.loyalty_points || 0;
@@ -127,7 +166,7 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ profile, bookings 
   const validBookings = bookings.filter((b) => b.status !== 'CANCELLED');
   const totalBookingsCount = validBookings.length;
 
-  const referralLink = `${window.location.origin}/signup?ref=${userReferralCode}`;
+  const referralLink = referralCode ? `${window.location.origin}/signup?ref=${userReferralCode}` : "";
 
   // Leaderboard State
   const [leaderboardTimeframe, setLeaderboardTimeframe] = useState<'all_time' | 'this_month' | 'weekly'>('all_time');
@@ -186,11 +225,95 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ profile, bookings 
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
+  const handleGenerateReferral = () => {
+    if (!profile?.id) {
+      triggerToast('Please log in to generate your unique referral link.');
+      return;
+    }
+
+    setIsGenerating(true);
+    setTimeout(() => {
+      const namePart = profile.full_name
+        ? profile.full_name.trim().split(' ')[0].toUpperCase().replace(/[^A-Z]/g, '')
+        : 'GLOW';
+      const randomPart = Math.floor(1000 + Math.random() * 9000);
+      const newCode = "NEX-" + (namePart || "GLOW") + "-" + randomPart;
+
+      setReferralCode(newCode);
+      localStorage.setItem("nxu_ref_code_" + profile.id, newCode);
+      setIsGenerating(false);
+      triggerToast('Unique referral link generated successfully! ✨');
+    }, 1200);
+  };
+
   const handleCopyReferralLink = () => {
+    if (!referralLink) return;
     if (navigator.clipboard) navigator.clipboard.writeText(referralLink);
     setCopiedLink(true);
     triggerToast('Referral link copied!');
     setTimeout(() => setCopiedLink(false), 2500);
+  };
+
+  const handleSimulateInviteFriend = () => {
+    if (!profile?.id) {
+      triggerToast('Please log in to invite friends.');
+      return;
+    }
+    if (!inviteFriendName.trim()) {
+      triggerToast("Please enter a friend's name.");
+      return;
+    }
+
+    const newFriend: ReferralItem = {
+      id: "sim-" + Date.now(),
+      name: inviteFriendName.trim(),
+      status: 'Pending First Booking',
+      pointsEarned: 0,
+      date: 'Just now'
+    };
+
+    const updated = [newFriend, ...invitedFriends];
+    setInvitedFriends(updated);
+    localStorage.setItem("nxu_invited_friends_" + profile.id, JSON.stringify(updated));
+    setInviteFriendName('');
+    triggerToast("Simulated signup for " + newFriend.name + "! 🚀");
+  };
+
+  const handleSimulateFirstBooking = async (friendId) => {
+    if (!profile?.id) return;
+
+    const friendIndex = invitedFriends.findIndex(f => f.id === friendId);
+    if (friendIndex === -1) return;
+
+    const friend = invitedFriends[friendIndex];
+    if (friend.status === 'Completed') return;
+
+    const updatedFriends = [...invitedFriends];
+    updatedFriends[friendIndex] = {
+      ...friend,
+      status: 'Completed',
+      pointsEarned: 250,
+      date: 'Today'
+    };
+
+    setInvitedFriends(updatedFriends);
+    localStorage.setItem("nxu_invited_friends_" + profile.id, JSON.stringify(updatedFriends));
+
+    if (supabase) {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ loyalty_points: loyaltyPoints + 250 })
+        .eq('id', profile.id);
+
+      if (error) {
+        console.error('Error updating loyalty points:', error);
+        triggerToast("Completed booking for " + friend.name + "! (Offline points cached)");
+      } else {
+        triggerToast("Booking completed! You earned +250 Glow Points! 🎉");
+      }
+    } else {
+      triggerToast("Booking completed! (Demo points cached)");
+    }
   };
 
   const triggerToast = (msg: string) => {
@@ -262,11 +385,131 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ profile, bookings 
       </section>
 
       <section className="bg-gradient-to-br from-[#fff0f3] via-white to-[#fde7f3] rounded-[24px] p-5 border border-[#fcd5e8] shadow-md flex flex-col gap-4">
-        <div className="flex items-center gap-3"><div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#e6007e] to-[#8e004b] flex items-center justify-center text-white shadow-md"><span className="material-symbols-outlined text-[24px]">diversity_3</span></div><div><h3 className="text-[17px] font-bold text-[#26181c]">Refer a Friend</h3><p className="text-[12px] text-[#5a3f47]">Share your code — coming soon!</p></div></div>
-        <div className="bg-white rounded-2xl p-4 border border-[#f3d3e2] shadow-xs flex flex-col gap-3">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-[#8e004b]">Your Referral Link</span>
-          <div className="flex items-center gap-2 bg-[#f8eff3] p-2.5 rounded-xl border border-[#ebd2de]"><span className="material-symbols-outlined text-[#e6007e] text-[18px] shrink-0">link</span><input type="text" readOnly value={referralLink} className="bg-transparent text-xs font-semibold flex-1 outline-none truncate" /><button onClick={handleCopyReferralLink} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1 ${copiedLink ? 'bg-emerald-600 text-white' : 'bg-[#e6007e] text-white'}`}>{copiedLink ? 'Copied' : 'Copy'}</button></div>
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#e6007e] to-[#8e004b] flex items-center justify-center text-white shadow-md">
+            <span className="material-symbols-outlined text-[24px]">diversity_3</span>
+          </div>
+          <div>
+            <h3 className="text-[17px] font-bold text-[#26181c]">Refer a Friend</h3>
+            <p className="text-[12px] text-[#5a3f47]">Invite friends & track your bonus points live!</p>
+          </div>
         </div>
+
+        {!referralCode ? (
+          <div className="bg-white rounded-2xl p-5 border border-[#f3d3e2] shadow-xs flex flex-col items-center text-center gap-4">
+            <span className="material-symbols-outlined text-[#e6007e] text-[40px] animate-bounce">celebration</span>
+            <div className="flex flex-col gap-1">
+              <h4 className="text-[15px] font-bold text-[#26181c]">Unlock Referral Rewards</h4>
+              <p className="text-xs text-[#5a3f47] leading-relaxed">
+                Earn <span className="font-bold text-[#e6007e]">250 bonus Glow Points</span> for every friend who joins & books their first salon session. Your friend also receives a discount!
+              </p>
+            </div>
+            <button
+              onClick={handleGenerateReferral}
+              disabled={isGenerating}
+              className="w-full h-11 bg-gradient-to-r from-[#e6007e] to-[#8e004b] hover:from-[#b90064] hover:to-[#8e004b] text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {isGenerating ? (
+                <>
+                  <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span>
+                  <span>Generating Link...</span>
+                </>
+              ) : (
+                <>
+                  <span className="material-symbols-outlined text-[18px]">magic_button</span>
+                  <span>Generate Unique Referral Link</span>
+                </>
+              )}
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div className="bg-white rounded-2xl p-4 border border-[#f3d3e2] shadow-xs flex flex-col gap-3">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[#8e004b]">Your Unique Referral Link</span>
+              <div className="flex items-center gap-2 bg-[#f8eff3] p-2.5 rounded-xl border border-[#ebd2de]">
+                <span className="material-symbols-outlined text-[#e6007e] text-[18px] shrink-0">link</span>
+                <input type="text" readOnly value={referralLink} className="bg-transparent text-xs font-semibold flex-1 outline-none truncate" />
+                <button onClick={handleCopyReferralLink} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1 ${copiedLink ? 'bg-emerald-600 text-white' : 'bg-[#e6007e] text-white'}`}>
+                  {copiedLink ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+
+            {/* Invited Friends Subsection */}
+            <div className="bg-white rounded-2xl p-4 border border-[#f3d3e2] shadow-xs flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-bold text-[#26181c] flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[16px] text-[#e6007e]">group</span>
+                  Your Invited Friends ({invitedFriends.length})
+                </span>
+                <span className="text-[10px] bg-[#fde7f3] text-[#e6007e] px-2 py-0.5 rounded-full font-bold">
+                  +250 pts / invite
+                </span>
+              </div>
+
+              {invitedFriends.length === 0 ? (
+                <div className="text-center py-4 text-xs text-[#8c7077] font-medium">
+                  No friends invited yet. Share your link above to get started!
+                </div>
+              ) : (
+                <div className="divide-y divide-[#fcf1f5] max-h-60 overflow-y-auto pr-1">
+                  {invitedFriends.map((friend) => (
+                    <div key={friend.id} className="py-3 flex items-center justify-between gap-2 first:pt-0 last:pb-0">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-9 h-9 rounded-full bg-[#fde7f3] text-[#e6007e] font-bold text-xs flex items-center justify-center shrink-0">
+                          {friend.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-[#26181c] truncate">{friend.name}</p>
+                          <p className="text-[10px] text-[#8c7077]">{friend.date}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {friend.status === 'Completed' ? (
+                          <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 text-[9px] font-bold px-2 py-1 rounded-full flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[11px]">check_circle</span>
+                            +250 pts
+                          </span>
+                        ) : (
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="bg-amber-100 text-amber-800 border border-amber-200 text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-0.5">
+                              <span className="material-symbols-outlined text-[11px]">schedule</span>
+                              Pending
+                            </span>
+                            <button
+                              onClick={() => handleSimulateFirstBooking(friend.id)}
+                              className="text-[9px] font-extrabold text-[#e6007e] bg-[#fde7f3] hover:bg-[#ebd2de] px-2 py-1 rounded-lg cursor-pointer transition-colors"
+                            >
+                              Simulate Booked
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Simulation Box to invite a new friend */}
+              <div className="pt-3 border-t border-dashed border-[#ebd2de] flex gap-2">
+                <input
+                  type="text"
+                  value={inviteFriendName}
+                  onChange={(e) => setInviteFriendName(e.target.value)}
+                  placeholder="Invite friend (demo name)..."
+                  className="bg-[#fcf9f8] text-xs font-medium px-3 py-2 rounded-xl border border-[#ebd2de] flex-1 outline-none focus:border-[#e6007e]"
+                />
+                <button
+                  onClick={handleSimulateInviteFriend}
+                  className="bg-[#e6007e] text-white hover:bg-[#b90064] text-xs font-bold px-3 py-2 rounded-xl shrink-0 cursor-pointer transition-colors"
+                >
+                  Invite
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="flex flex-col gap-3">

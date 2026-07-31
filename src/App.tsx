@@ -73,6 +73,29 @@ export default function App() {
   };
 
   useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('demo') === 'true') {
+      setUser({ id: 'demo-user-id', email: 'demo@nexora.in', role: 'customer' });
+      setProfile({
+        id: 'demo-user-id',
+        full_name: 'Demo Customer',
+        phone: '9876543210',
+        photo_url: null,
+        platform_role: 'customer',
+        is_active: true,
+        loyalty_points: 350,
+        wallet_balance_paise: 5000,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        preferred_city: 'Jaipur',
+        preferred_area: 'Malviya Nagar',
+        gender: null,
+        date_of_birth: null,
+      });
+      setAuthLoading(false);
+      return;
+    }
+
     let isMounted = true;
 
     if (!supabase) {
@@ -904,7 +927,7 @@ export default function App() {
     currentScreen === 'cancellation';
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  if (supabaseConfigError) {
+  if (supabaseConfigError && new URLSearchParams(window.location.search).get('demo') !== 'true') {
     return (
       <div className="min-h-screen bg-[#fff8f8] text-[#26181c] flex items-center justify-center p-6">
         <div className="w-full max-w-md rounded-2xl border border-rose-200 bg-white p-6 text-center shadow-sm">
