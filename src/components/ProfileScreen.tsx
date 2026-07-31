@@ -31,6 +31,7 @@ interface ProfileScreenProps {
   profile: CustomerProfile | null;
   onSaveProfile: (patch: ProfilePatch) => Promise<boolean>;
   onUploadAvatar: (file: File) => Promise<boolean>;
+  userEmail: string;
 }
 
 interface MenuItemProps {
@@ -76,13 +77,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   profile,
   onSaveProfile,
   onUploadAvatar,
+  userEmail,
 }) => {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
 
   const [name, setName] = useState<string>(profile?.full_name ?? '');
-  const [email, setEmail] = useState<string>(profile?.email ?? '');
+  const [email, setEmail] = useState<string>(userEmail);
   const [phone, setPhone] = useState<string>(profile?.phone ?? '');
   const [avatar, setAvatar] = useState<string>(avatarUrlWithVersion(profile ?? null));
 
@@ -98,9 +100,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [preferredArea, setPreferredArea] = useState<string>(profile?.preferred_area ?? '');
 
   useEffect(() => {
+    setEmail(userEmail);
+  }, [userEmail]);
+
+  useEffect(() => {
     if (!profile) return;
     setName(profile.full_name ?? '');
-    setEmail(profile.email ?? '');
     setPhone(profile.phone ?? '');
     setAvatar(avatarUrlWithVersion(profile));
     setDob(profile.date_of_birth ?? '');
