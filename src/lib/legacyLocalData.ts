@@ -56,6 +56,36 @@ export function purgeLegacyLocalStorage(): void {
   }
 }
 
+// Business-data keys that previously lived in localStorage are NEVER allowed
+// back after Phase 1 (reviews, referral code, invited friends). They are
+// purged unconditionally on every login, regardless of the one-time migration
+// flag, so devices upgraded from older builds get cleaned too.
+// Device-only UI/PWA preferences (install prompts, browsing location) are
+// intentionally NOT touched here.
+const OBSOLETE_BUSINESS_PREFIXES = [
+  'nexora_service_reviews_',
+  'nxu_ref_code_',
+  'nxu_invited_friends_',
+];
+
+export function purgeObsoleteBusinessKeys(): void {
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (OBSOLETE_BUSINESS_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+        doomed.push(key);
+      }
+    }
+    for (const key of doomed) {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // storage unavailable — nothing to purge
+  }
+}
+
 export function readLegacyJson<T>(key: string): T | null {
   try {
     const raw = localStorage.getItem(key);

@@ -32,6 +32,9 @@ interface ProfileScreenProps {
   onSaveProfile: (patch: ProfilePatch) => Promise<boolean>;
   onUploadAvatar: (file: File) => Promise<boolean>;
   userEmail: string;
+  /** Session-scoped referral state from App (never localStorage). */
+  referralCode?: string | null;
+  invitedFriendsCount?: number;
 }
 
 interface MenuItemProps {
@@ -78,6 +81,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onSaveProfile,
   onUploadAvatar,
   userEmail,
+  referralCode = null,
+  invitedFriendsCount = 0,
 }) => {
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -691,10 +696,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
       <Modal isOpen={isReferEarnOpen} onClose={() => setIsReferEarnOpen(false)} title="Refer & Earn">
         {(() => {
-          const storedReferralCode = profile?.id ? localStorage.getItem(`nxu_ref_code_${profile.id}`) : null;
-          const storedFriendsJSON = profile?.id ? localStorage.getItem(`nxu_invited_friends_${profile.id}`) : null;
-          const friends = storedFriendsJSON ? JSON.parse(storedFriendsJSON) : [];
-          const activeReferralLink = storedReferralCode ? `${window.location.origin}/signup?ref=${storedReferralCode}` : profileDeepLink;
+          // Referral state comes from App's session state (shared with the
+          // Rewards screen) — never from localStorage. A deterministic code
+          // derived from the shared profile row is used until the user
+          // generates one in the Rewards tab.
+          const activeCode =
+            referralCode ||
+            (profile?.id ? `NEX-${profile.id.slice(0, 4).toUpperCase()}` : null);
+          const activeReferralLink = activeCode
+            ? `${window.location.origin}/signup?ref=${activeCode}`
+            : profileDeepLink;
 
           return (
             <div className="flex flex-col items-center text-center gap-4 p-2">
@@ -702,7 +713,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <span className="material-symbols-outlined text-[32px]">redeem</span>
               </div>
 
-              {storedReferralCode ? (
+              {activeCode ? (
                 <>
                   <h4 className="text-[16px] font-bold text-[#26181c]">Your Referral Code is Live! 🎉</h4>
                   <p className="text-xs text-[#5a3f47] leading-relaxed">
@@ -726,7 +737,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   </div>
 
                   <div className="text-xs text-[#8c7077] font-semibold mt-1">
-                    You have invited {friends.length} friends so far.
+                    You have invited {invitedFriendsCount} friends so far.
                   </div>
 
                   <button

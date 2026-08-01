@@ -186,6 +186,14 @@ export interface WaitlistEntry {
   status: 'ACTIVE' | 'NOTIFIED' | 'EXPIRED' | 'CANCELLED';
 }
 
+export interface ReferralFriend {
+  id: string;
+  name: string;
+  status: 'Completed' | 'Pending First Booking';
+  pointsEarned: number;
+  date: string;
+}
+
 export interface SavedProfessional {
   id: string;
   salonId: string;
