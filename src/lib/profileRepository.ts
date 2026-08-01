@@ -24,8 +24,14 @@ export interface CustomerProfile {
   wallet_balance_paise?: number | null;
 }
 
-const PROFILE_COLUMNS =
+const SAFE_PROFILE_COLUMNS =
   'id, full_name, phone, photo_url, preferred_city, preferred_area, gender, date_of_birth, platform_role, is_active, created_at, updated_at, recently_viewed';
+
+// Rewards/wallet columns live on the shared profiles row (server truth).
+// Kept separate so a schema that lacks them still loads the profile.
+const REWARDS_PROFILE_COLUMNS = 'loyalty_points, wallet_balance_paise';
+
+const PROFILE_COLUMNS = `${SAFE_PROFILE_COLUMNS}, ${REWARDS_PROFILE_COLUMNS}`;
 
 export type ProfilePatch = Partial<
   Pick<
@@ -45,12 +51,27 @@ export async function loadProfile(
   client: SupabaseClient,
   userId: string,
 ): Promise<CustomerProfile | null> {
-  const { data, error } = await client
-    .from('profiles')
-    .select(PROFILE_COLUMNS)
-    .eq('id', userId)
-    .maybeSingle();
-  if (error) throw error;
+  const query = () =>
+    client
+      .from('profiles')
+      .select(PROFILE_COLUMNS)
+      .eq('id', userId)
+      .maybeSingle();
+  const { data, error } = await query();
+  if (error) {
+    // Defensive fallback: if the shared schema has no rewards/wallet columns
+    // yet, still load the profile without them (never block login on them).
+    if (error.code === 'PGRST204' || /could not find/i.test(error.message)) {
+      const { data: safeData, error: safeError } = await client
+        .from('profiles')
+        .select(SAFE_PROFILE_COLUMNS)
+        .eq('id', userId)
+        .maybeSingle();
+      if (safeError) throw safeError;
+      return (safeData as CustomerProfile | null) ?? null;
+    }
+    throw error;
+  }
   return (data as CustomerProfile | null) ?? null;
 }
 

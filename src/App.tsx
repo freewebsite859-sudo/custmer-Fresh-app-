@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase, supabaseConfigError } from './lib/supabaseClient';
-import { Screen, Salon, Service, Staff, Booking, UserLocation, AppNotification, ServiceReview, SavedProfessional, SavedService } from './types';
+import { Screen, Salon, Service, Staff, Booking, UserLocation, AppNotification, ServiceReview, ReferralFriend, SavedProfessional, SavedService } from './types';
 import {
   INITIAL_LOCATION,
 } from './data/mockData';
@@ -13,7 +13,7 @@ import { loadSettings, saveSettings, settingsFromLegacyLocalStorage, SETTINGS_DE
 import { loadAddresses, importLegacyAddresses } from './lib/addressesRepository';
 import { loadPaymentMethods, importLegacyPaymentMethods, addUpiMethod } from './lib/paymentMethodsRepository';
 import { loadServerNotifications, subscribeToServerNotifications } from './lib/serverNotifications';
-import { purgeLegacyLocalStorage, readLegacyJson, readLegacyValue, LEGACY_MIGRATION_FLAG } from './lib/legacyLocalData';
+import { purgeLegacyLocalStorage, purgeObsoleteBusinessKeys, readLegacyJson, readLegacyValue, LEGACY_MIGRATION_FLAG } from './lib/legacyLocalData';
 import { PaymentStatusTracker } from './components/PaymentStatusTracker';
 
 import { Header } from './components/Header';
@@ -293,6 +293,14 @@ export default function App() {
   const [localOnlyBookings, setLocalOnlyBookings] = useState<Booking[]>([]);
   const [reviewedBookingIds, setReviewedBookingIds] = useState<string[]>([]);
 
+  // Reviews + referral tracking are session-scoped in-memory state. They are
+  // NOT persisted to localStorage (business data), and the shared schema has
+  // no reviews/referrals table yet — cross-device persistence for these two
+  // features needs a schema addition (tracked as a Phase 1 remaining issue).
+  const [serviceReviewsBySalon, setServiceReviewsBySalon] = useState<Record<string, ServiceReview[]>>({});
+  const [referralCode, setReferralCode] = useState<string | null>(null);
+  const [invitedFriends, setInvitedFriends] = useState<ReferralFriend[]>([]);
+
   const mapServerStatus = (status: string | null): Booking['status'] => {
     const s = (status ?? '').toLowerCase();
     if (s.includes('cancel') || s.includes('no_show') || s.includes('noshow')) return 'CANCELLED';
@@ -469,6 +477,11 @@ export default function App() {
           try { localStorage.setItem(LEGACY_MIGRATION_FLAG, 'done'); } catch { /* storage unavailable */ }
           purgeLegacyLocalStorage();
         }
+
+        // Business data (reviews, referral code, invited friends) is never
+        // stored in localStorage anymore; sweep any leftovers from older
+        // builds on every login, not just first migration.
+        purgeObsoleteBusinessKeys();
 
         // 3) Hydrate favourites / bookings / notifications from the server
         await Promise.all([refreshFavorites(), refreshBookings()]);
@@ -803,23 +816,16 @@ export default function App() {
   };
 
   const handleAddReviewFromBooking = (salonId: string, newRev: Omit<ServiceReview, 'id' | 'date'>) => {
-    const storageKey = `nexora_service_reviews_${salonId}`;
-    const saved = localStorage.getItem(storageKey);
-    let currentReviews: ServiceReview[] = [];
-    if (saved) {
-      try {
-        currentReviews = JSON.parse(saved);
-      } catch (e) {
-        console.error(e);
-      }
-    }
     const created: ServiceReview = {
       ...newRev,
+      salonId,
       id: `sr-${Date.now()}`,
       date: 'Just now',
     };
-    const updatedReviews = [created, ...currentReviews];
-    localStorage.setItem(storageKey, JSON.stringify(updatedReviews));
+    setServiceReviewsBySalon((prev) => ({
+      ...prev,
+      [salonId]: [created, ...(prev[salonId] ?? [])],
+    }));
   };
 
   const triggerPushNotificationForBooking = (bookingId?: string) => {
@@ -1089,6 +1095,8 @@ export default function App() {
               onToggleFavorite={() => handleToggleFavorite(selectedSalon.id)}
               bookings={bookings}
               customerName={profile?.full_name ?? ''}
+              serviceReviews={serviceReviewsBySalon[selectedSalon.id] ?? []}
+              onSubmitReview={(newRev) => handleAddReviewFromBooking(selectedSalon.id, newRev)}
             />
           )}
 
@@ -1137,7 +1145,17 @@ export default function App() {
             />
           )}
 
-          {currentScreen === 'rewards' && <RewardsScreen profile={profile} bookings={bookings} customerName={profile?.full_name ?? ''} />}
+          {currentScreen === 'rewards' && (
+            <RewardsScreen
+              profile={profile}
+              bookings={bookings}
+              customerName={profile?.full_name ?? ''}
+              referralCode={referralCode}
+              invitedFriends={invitedFriends}
+              onReferralCodeChange={setReferralCode}
+              onInvitedFriendsChange={setInvitedFriends}
+            />
+          )}
 
           {currentScreen === 'profile' && (
             <ProfileScreen
@@ -1152,6 +1170,8 @@ export default function App() {
               onSaveProfile={(patch) => handleSaveProfile(patch)}
               onUploadAvatar={handleUploadAvatar}
               userEmail={user?.email ?? ''}
+              referralCode={referralCode}
+              invitedFriendsCount={invitedFriends.length}
             />
           )}
 

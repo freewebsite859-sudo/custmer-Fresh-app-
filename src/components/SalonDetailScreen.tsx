@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Salon, Service, Staff, ServiceReview, Booking } from '../types';
 import { ServiceReviewModal } from './ServiceReviewModal';
 import { MiniCalendar } from './MiniCalendar';
@@ -16,6 +16,9 @@ interface SalonDetailScreenProps {
   onToggleFavorite: () => void;
   bookings: Booking[];
   customerName?: string;
+  /** Server/session-backed reviews for this salon (never localStorage). */
+  serviceReviews?: ServiceReview[];
+  onSubmitReview?: (newRev: Omit<ServiceReview, 'id' | 'date'>) => void;
 }
 
 export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
@@ -30,6 +33,8 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
   onToggleFavorite,
   bookings,
   customerName = '',
+  serviceReviews = [],
+  onSubmitReview,
 }) => {
   const availableStaff = salon.staff || [];
 
@@ -113,45 +118,49 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
     month: 'short' 
   });
 
-  const timeSlotsWithAvailability = [
-    { time: '09:00 AM', isAvailable: false, period: 'Morning' },
-    { time: '09:30 AM', isAvailable: false, period: 'Morning' },
-    { time: '10:00 AM', isAvailable: true, period: 'Morning' },
-    { time: '10:30 AM', isAvailable: true, period: 'Morning' },
-    { time: '11:00 AM', isAvailable: true, period: 'Morning' },
-    { time: '12:00 PM', isAvailable: true, period: 'Afternoon' },
-    { time: '01:00 PM', isAvailable: true, period: 'Afternoon' },
-    { time: '03:00 PM', isAvailable: false, period: 'Afternoon' },
-    { time: '04:30 PM', isAvailable: true, period: 'Afternoon' },
-    { time: '06:00 PM', isAvailable: true, period: 'Evening' },
-    { time: '06:30 PM', isAvailable: false, period: 'Evening' },
-  ];
+  // Live slots: derived from the salon's REAL opening hours (fetched from the
+  // shared Supabase `salon_public_websites` config via the salon row) — the
+  // same hourly-grid rule the checkout step uses. No hardcoded mock slots.
+  const parseHour = (text: string): number | null => {
+    const m = /(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i.exec(text || '');
+    if (!m) return null;
+    let h = parseInt(m[1], 10) % 12;
+    if (m[3].toUpperCase() === 'PM') h += 12;
+    return h * 60 + parseInt(m[2] || '0', 10);
+  };
+  const formatSlot = (mins: number): string => {
+    const h24 = Math.floor(mins / 60);
+    const mm = String(mins % 60).padStart(2, '0');
+    const suffix = h24 >= 12 ? 'PM' : 'AM';
+    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    return `${String(h12).padStart(2, '0')}:${mm} ${suffix}`;
+  };
 
-
-  const [serviceReviews, setServiceReviews] = useState<ServiceReview[]>(() => {
-    const saved = localStorage.getItem(`nexora_service_reviews_${salon.id}`);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved reviews', e);
-      }
+  const timeSlotsWithAvailability = useMemo(() => {
+    const parts = (salon.hours || '').split(/[–-]/);
+    const opens = parseHour(parts[0] || '') ?? 9 * 60;
+    const closes = parseHour(parts[1] || '') ?? 20 * 60;
+    const now = new Date();
+    const nowMins = now.getHours() * 60 + now.getMinutes();
+    const activeIsToday = selectedDate
+      ? selectedDate.toDateString() === now.toDateString()
+      : false;
+    const out: Array<{ time: string; isAvailable: boolean; period: string }> = [];
+    for (let m = opens; m < closes; m += 60) {
+      const time = formatSlot(m);
+      const isAvailable = !(activeIsToday && m <= nowMins);
+      const period = m < 12 * 60 ? 'Morning' : m < 17 * 60 ? 'Afternoon' : 'Evening';
+      out.push({ time, isAvailable, period });
     }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [salon.hours, selectedDate]);
 
-    return [];
-  });
 
-  useEffect(() => {
-    localStorage.setItem(`nexora_service_reviews_${salon.id}`, JSON.stringify(serviceReviews));
-  }, [serviceReviews, salon.id]);
-
+  // Reviews come from app session state (shared with the bookings flow),
+  // never from localStorage — business data lives on the server/shared ops.
   const handleAddReview = (newRev: Omit<ServiceReview, 'id' | 'date'>) => {
-    const created: ServiceReview = {
-      ...newRev,
-      id: `sr-${Date.now()}`,
-      date: 'Just now',
-    };
-    setServiceReviews((prev) => [created, ...prev]);
+    onSubmitReview?.(newRev);
   };
 
   const openReviewForService = (serviceId?: string, preselectedRating?: number) => {

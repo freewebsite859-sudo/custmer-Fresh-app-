@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Booking, LoyaltyTier } from '../types';
+import { Booking, LoyaltyTier, ReferralFriend } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import type { CustomerProfile } from '../lib/profileRepository';
 
@@ -7,6 +7,11 @@ interface RewardsScreenProps {
   profile: CustomerProfile | null;
   bookings?: Booking[];
   customerName?: string;
+  /** Session-scoped referral state owned by App (never localStorage). */
+  referralCode?: string | null;
+  invitedFriends?: ReferralFriend[];
+  onReferralCodeChange?: (code: string | null) => void;
+  onInvitedFriendsChange?: (friends: ReferralFriend[]) => void;
 }
 
 export const TIERS: LoyaltyTier[] = [
@@ -83,14 +88,6 @@ export const TIERS: LoyaltyTier[] = [
   },
 ];
 
-interface ReferralItem {
-  id: string;
-  name: string;
-  status: 'Completed' | 'Pending First Booking';
-  pointsEarned: number;
-  date: string;
-}
-
 interface LeaderboardMember {
   id: string;
   name: string;
@@ -103,7 +100,15 @@ interface LeaderboardMember {
   isUser?: boolean;
 }
 
-export const RewardsScreen: React.FC<RewardsScreenProps> = ({ profile, bookings = [], customerName = '' }) => {
+export const RewardsScreen: React.FC<RewardsScreenProps> = ({
+  profile,
+  bookings = [],
+  customerName = '',
+  referralCode = null,
+  invitedFriends = [],
+  onReferralCodeChange,
+  onInvitedFriendsChange,
+}) => {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
@@ -114,51 +119,17 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ profile, bookings 
   const [showRedeemModal, setShowRedeemModal] = useState(false);
   const [redeemedDiscount, setRedeemedDiscount] = useState<number | null>(null);
 
-  // Referral & Invited Friends State
-  const [referralCode, setReferralCode] = useState<string | null>(null);
-  const [invitedFriends, setInvitedFriends] = useState<ReferralItem[]>([]);
+  // Referral & Invited Friends State (session-scoped in App — no localStorage)
   const [inviteFriendName, setInviteFriendName] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
 
-  useEffect(() => {
-    if (!profile?.id) return;
-
-    // Load unique generated code if any
-    const storedCode = localStorage.getItem(`nxu_ref_code_${profile.id}`);
-    setReferralCode(storedCode);
-
-    // Load or initialize referred friends
-    const storedFriends = localStorage.getItem(`nxu_invited_friends_${profile.id}`);
-    if (storedFriends) {
-      setInvitedFriends(JSON.parse(storedFriends));
-    } else {
-      const defaultFriends: ReferralItem[] = [
-        {
-          id: "seed-1",
-          name: "Aman Sharma",
-          status: "Completed",
-          pointsEarned: 250,
-          date: "Yesterday"
-        },
-        {
-          id: "seed-2",
-          name: "Priya Patel",
-          status: "Pending First Booking",
-          pointsEarned: 0,
-          date: "3 days ago"
-        }
-      ];
-      setInvitedFriends(defaultFriends);
-      localStorage.setItem(`nxu_invited_friends_${profile.id}`, JSON.stringify(defaultFriends));
-    }
-  }, [profile?.id]);
-
-  // Use generated code if available, fallback to default profile slice or GLOW-GUEST
+  // Use generated code if available, fallback to a deterministic code derived
+  // from the shared profile row (server data), or GLOW-GUEST for guests.
   const userReferralCode = referralCode || (profile?.id ? `NEX-${profile.id.slice(0, 4).toUpperCase()}` : 'GLOW-GUEST');
-  
-  // Loyalty points and wallet balance from profile
-  const loyaltyPoints = (profile as any)?.loyalty_points || 0;
-  const walletBalance = ((profile as any)?.wallet_balance_paise || 0) / 100;
+
+  // Loyalty points and wallet balance from the shared profiles row (server truth)
+  const loyaltyPoints = profile?.loyalty_points ?? 0;
+  const walletBalance = (profile?.wallet_balance_paise ?? 0) / 100;
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -239,8 +210,7 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ profile, bookings 
       const randomPart = Math.floor(1000 + Math.random() * 9000);
       const newCode = "NEX-" + (namePart || "GLOW") + "-" + randomPart;
 
-      setReferralCode(newCode);
-      localStorage.setItem("nxu_ref_code_" + profile.id, newCode);
+      onReferralCodeChange?.(newCode);
       setIsGenerating(false);
       triggerToast('Unique referral link generated successfully! ✨');
     }, 1200);
@@ -264,7 +234,7 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ profile, bookings 
       return;
     }
 
-    const newFriend: ReferralItem = {
+    const newFriend: ReferralFriend = {
       id: "sim-" + Date.now(),
       name: inviteFriendName.trim(),
       status: 'Pending First Booking',
@@ -273,13 +243,12 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ profile, bookings 
     };
 
     const updated = [newFriend, ...invitedFriends];
-    setInvitedFriends(updated);
-    localStorage.setItem("nxu_invited_friends_" + profile.id, JSON.stringify(updated));
+    onInvitedFriendsChange?.(updated);
     setInviteFriendName('');
     triggerToast("Simulated signup for " + newFriend.name + "! 🚀");
   };
 
-  const handleSimulateFirstBooking = async (friendId) => {
+  const handleSimulateFirstBooking = async (friendId: string) => {
     if (!profile?.id) return;
 
     const friendIndex = invitedFriends.findIndex(f => f.id === friendId);
@@ -296,24 +265,85 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ profile, bookings 
       date: 'Today'
     };
 
-    setInvitedFriends(updatedFriends);
-    localStorage.setItem("nxu_invited_friends_" + profile.id, JSON.stringify(updatedFriends));
+    onInvitedFriendsChange?.(updatedFriends);
 
     if (supabase) {
+      // Read the CURRENT server points first so rapid clicks never clobber a
+      // freshly credited balance (realtime pushes the new row back to the UI).
+      let currentPoints = profile.loyalty_points ?? 0;
+      try {
+        const { data: freshRow } = await supabase
+          .from('profiles')
+          .select('loyalty_points')
+          .eq('id', profile.id)
+          .maybeSingle();
+        if (freshRow && typeof (freshRow as any).loyalty_points === 'number') {
+          currentPoints = (freshRow as any).loyalty_points as number;
+        }
+      } catch (e) {
+        console.warn('Loyalty points read notice:', e);
+      }
+
       const { error } = await supabase
         .from('profiles')
-        .update({ loyalty_points: loyaltyPoints + 250 })
+        .update({ loyalty_points: currentPoints + 250 })
         .eq('id', profile.id);
 
       if (error) {
         console.error('Error updating loyalty points:', error);
-        triggerToast("Completed booking for " + friend.name + "! (Offline points cached)");
+        triggerToast("Completed booking for " + friend.name + "! (Points credit pending)");
       } else {
         triggerToast("Booking completed! You earned +250 Glow Points! 🎉");
       }
     } else {
       triggerToast("Booking completed! (Demo points cached)");
     }
+  };
+
+  const handleRedeem = async (opt: { pts: number; discount: number; label: string }) => {
+    if (!supabase || !profile) return;
+
+    // Read CURRENT server values first (same shared profiles row) so rapid
+    // actions never overwrite a newer balance with stale render-time numbers.
+    let currentPoints = profile.loyalty_points ?? 0;
+    let currentWalletPaise = profile.wallet_balance_paise ?? 0;
+    try {
+      const { data: freshRow } = await supabase
+        .from('profiles')
+        .select('loyalty_points, wallet_balance_paise')
+        .eq('id', profile.id)
+        .maybeSingle();
+      if (freshRow) {
+        const row = freshRow as Record<string, unknown>;
+        if (typeof row.loyalty_points === 'number') currentPoints = row.loyalty_points;
+        if (typeof row.wallet_balance_paise === 'number') currentWalletPaise = row.wallet_balance_paise;
+      }
+    } catch (e) {
+      console.warn('Rewards balance read notice:', e);
+    }
+
+    if (currentPoints < opt.pts) {
+      triggerToast('Not enough Glow Points for this voucher yet.');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        loyalty_points: currentPoints - opt.pts,
+        wallet_balance_paise: currentWalletPaise + opt.discount * 100,
+      })
+      .eq('id', profile.id);
+
+    if (error) {
+      console.error('Error redeeming rewards:', error);
+      triggerToast('Reward could not be redeemed. Please try again.');
+      return;
+    }
+
+    setRedeemedDiscount(opt.discount);
+    setShowRedeemModal(false);
+    triggerToast(`Redeemed ${opt.label}!`);
   };
 
   const triggerToast = (msg: string) => {
@@ -539,7 +569,7 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({ profile, bookings 
             <div className="space-y-2.5 mb-5">
               {[{ pts: 500, discount: 100, label: '₹100 Off Voucher' }, { pts: 1000, discount: 250, label: '₹250 Off Voucher' }].map((opt) => {
                 const canAfford = loyaltyPoints >= opt.pts;
-                return (<button key={opt.pts} disabled={!canAfford} onClick={async () => { if (!supabase || !profile) return; const { error } = await supabase.from('profiles').update({ loyalty_points: loyaltyPoints - opt.pts, wallet_balance_paise: ((profile as any).wallet_balance_paise || 0) + (opt.discount * 100) }).eq('id', profile.id); if (!error) { setRedeemedDiscount(opt.discount); setShowRedeemModal(false); triggerToast(`Redeemed ${opt.label}!`); } }} className={`w-full p-3.5 rounded-2xl border flex items-center justify-between text-left transition-all ${canAfford ? 'border-[#e6007e]/30 bg-[#fff5f8] hover:bg-[#fde7f3] cursor-pointer' : 'border-slate-200 bg-slate-50 opacity-60'}`}><div><div className="text-xs font-bold text-[#26181c]">{opt.label}</div><div className="text-[10px] text-[#5a3f47]">{opt.pts} points required</div></div><span className="text-xs font-bold text-[#e6007e] bg-white px-2.5 py-1 rounded-xl shadow-xs">Redeem</span></button>);
+                return (<button key={opt.pts} disabled={!canAfford} onClick={() => void handleRedeem(opt)} className={`w-full p-3.5 rounded-2xl border flex items-center justify-between text-left transition-all ${canAfford ? 'border-[#e6007e]/30 bg-[#fff5f8] hover:bg-[#fde7f3] cursor-pointer' : 'border-slate-200 bg-slate-50 opacity-60'}`}><div><div className="text-xs font-bold text-[#26181c]">{opt.label}</div><div className="text-[10px] text-[#5a3f47]">{opt.pts} points required</div></div><span className="text-xs font-bold text-[#e6007e] bg-white px-2.5 py-1 rounded-xl shadow-xs">Redeem</span></button>);
               })}
             </div>
           </div>
