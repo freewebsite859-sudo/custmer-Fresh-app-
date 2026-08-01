@@ -12,7 +12,7 @@ import { loadFavorites, setFavorite, subscribeToFavorites } from './lib/favorite
 import { loadSettings, saveSettings, settingsFromLegacyLocalStorage, SETTINGS_DEFAULTS } from './lib/settingsRepository';
 import { loadAddresses, importLegacyAddresses } from './lib/addressesRepository';
 import { loadPaymentMethods, importLegacyPaymentMethods, addUpiMethod } from './lib/paymentMethodsRepository';
-import { loadServerNotifications, subscribeToServerNotifications } from './lib/serverNotifications';
+import { loadServerNotifications, markAllServerNotificationsRead, subscribeToServerNotifications } from './lib/serverNotifications';
 import { purgeLegacyLocalStorage, purgeObsoleteBusinessKeys, readLegacyJson, readLegacyValue, LEGACY_MIGRATION_FLAG } from './lib/legacyLocalData';
 import { PaymentStatusTracker } from './components/PaymentStatusTracker';
 
@@ -989,9 +989,14 @@ export default function App() {
         onClose={() => setIsNotificationDrawerOpen(false)}
         notifications={notifications}
         bookings={bookings}
-        onMarkAllAsRead={() =>
-          setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
-        }
+        onMarkAllAsRead={() => {
+          setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+          if (supabase && user) {
+            markAllServerNotificationsRead(supabase, user.id).catch((e: any) =>
+              console.warn('Mark-all-read sync notice:', e?.message || e),
+            );
+          }
+        }}
         onClearAll={() => setNotifications([])}
         onTriggerTestNotification={triggerPushNotificationForBooking}
         onNavigate={(screen) => setCurrentScreen(screen)}
