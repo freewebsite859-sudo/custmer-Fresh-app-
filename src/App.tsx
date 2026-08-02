@@ -37,6 +37,7 @@ import { NotificationDrawer } from './components/NotificationDrawer';
 import { LoginScreen } from './components/auth/LoginScreen';
 import { SignUpScreen } from './components/auth/SignUpScreen';
 import { RoleAssignedConflict } from './components/auth/RoleAssignedConflict';
+import { ResetPasswordScreen } from './components/auth/ResetPasswordScreen';
 import { ScanUpiQrModal } from './components/ScanUpiQrModal';
 import { AddUpiModal, SavedUpi } from './components/AddUpiModal';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
@@ -51,7 +52,7 @@ export default function App() {
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<CustomerProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [authScreen, setAuthScreen] = useState<'login' | 'signup' | 'role-conflict'>('login');
+  const [authScreen, setAuthScreen] = useState<'login' | 'signup' | 'role-conflict' | 'reset-password'>('login');
   const [conflictRole, setConflictRole] = useState<string | null>(null);
 
   const [screenStack, setScreenStack] = useState<Screen[]>(['home']);
@@ -107,6 +108,18 @@ export default function App() {
 
     const client = supabase;
 
+    const enterPasswordReset = () => {
+      setUser(null);
+      setProfile(null);
+      setConflictRole(null);
+      setAuthScreen('reset-password');
+      setAuthLoading(false);
+    };
+
+    const isRecoveryLink = () =>
+      typeof window !== 'undefined' &&
+      window.location.hash.includes('type=recovery');
+
     const verifyPlatformAccess = async (
       authUser: { id: string }
     ): Promise<{ allowed: boolean; role: string | null; profile: CustomerProfile | null }> => {
@@ -121,6 +134,13 @@ export default function App() {
 
     const applySession = async (session: { user?: any } | null) => {
       if (!isMounted) return;
+      // A "forgot password" link carries a recovery session in the URL hash.
+      // In that case we must show the set-new-password screen, never treat the
+      // recovery session as a normal login.
+      if (isRecoveryLink()) {
+        enterPasswordReset();
+        return;
+      }
       const authUser = session?.user ?? null;
       if (!authUser) {
         setUser(null);
@@ -169,9 +189,12 @@ export default function App() {
         });
 
       const { data } = client.auth.onAuthStateChange((_event, session) => {
-        if (isMounted) {
-          void applySession(session);
+        if (!isMounted) return;
+        if (_event === 'PASSWORD_RECOVERY') {
+          enterPasswordReset();
+          return;
         }
+        void applySession(session);
       });
 
       return () => {
@@ -961,9 +984,11 @@ export default function App() {
           existingRole={conflictRole ?? undefined}
           onLogin={() => setAuthScreen('login')}
           onUseAnotherEmail={() => setAuthScreen('signup')}
-          onContactSupport={() => setCurrentScreen('support')}
         />
       );
+    }
+    if (authScreen === 'reset-password') {
+      return <ResetPasswordScreen onDone={() => setAuthScreen('login')} />;
     }
     if (authScreen === 'signup') {
       return <SignUpScreen onToggleAuth={() => setAuthScreen('login')} />;
