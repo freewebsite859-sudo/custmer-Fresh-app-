@@ -39,6 +39,15 @@ function rowToCard(row: MethodRow): SavedCard {
   };
 }
 
+const isMissingTableError = (error: { code?: string; message?: string } | null): boolean => {
+  if (!error) return false;
+  return (
+    error.code === '42P01' ||
+    error.code === 'PGRST205' ||
+    /could not find a table|relation .* does not exist/i.test(error.message || '')
+  );
+};
+
 export async function loadPaymentMethods(
   client: SupabaseClient,
   userId: string,
@@ -48,7 +57,10 @@ export async function loadPaymentMethods(
     .select('id, user_id, method, label, details, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
-  if (error) throw error;
+  if (error) {
+    if (isMissingTableError(error)) return { upis: [], cards: [] };
+    throw error;
+  }
   const rows = (data ?? []) as MethodRow[];
   return {
     upis: rows.filter((r) => r.method === 'upi').map(rowToUpi),

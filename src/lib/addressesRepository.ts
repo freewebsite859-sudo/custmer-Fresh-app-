@@ -37,6 +37,15 @@ export function rowToAddress(row: AddressRow): Address {
   };
 }
 
+const isMissingTableError = (error: { code?: string; message?: string } | null): boolean => {
+  if (!error) return false;
+  return (
+    error.code === '42P01' ||
+    error.code === 'PGRST205' ||
+    /could not find a table|relation .* does not exist/i.test(error.message || '')
+  );
+};
+
 export async function loadAddresses(
   client: SupabaseClient,
   userId: string,
@@ -46,7 +55,10 @@ export async function loadAddresses(
     .select('id, user_id, label, street, landmark, city, state, pincode, is_default')
     .eq('user_id', userId)
     .order('created_at', { ascending: true });
-  if (error) throw error;
+  if (error) {
+    if (isMissingTableError(error)) return [];
+    throw error;
+  }
   return (data ?? []).map((row) => rowToAddress(row as AddressRow));
 }
 

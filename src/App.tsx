@@ -119,7 +119,7 @@ export default function App() {
 
     const isRecoveryLink = () =>
       typeof window !== 'undefined' &&
-      window.location.hash.includes('type=recovery');
+      (window.location.href.includes('type=recovery') || window.location.pathname.includes('reset-password'));
 
     const verifyPlatformAccess = async (
       authUser: { id: string }
