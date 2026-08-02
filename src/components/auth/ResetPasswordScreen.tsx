@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import { friendlyAuthErrorMessage } from '../../lib/authErrors';
 import { Eye, EyeOff } from 'lucide-react';
 import { LOGO_SQUARE } from '../../data/mockData';
 
@@ -37,7 +38,7 @@ export const ResetPasswordScreen: React.FC<ResetPasswordScreenProps> = ({ onDone
     try {
       const { error } = await supabase.auth.updateUser({ password });
       if (error) {
-        setErrorMsg(error.message || 'Could not update your password. Please try again.');
+        setErrorMsg(friendlyAuthErrorMessage(error, 'Could not update your password. Please try again.'));
       } else {
         setDone(true);
       }

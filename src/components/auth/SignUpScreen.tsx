@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import { friendlyAuthErrorMessage } from '../../lib/authErrors';
 import { Eye, EyeOff } from 'lucide-react';
 import { LOGO_SQUARE } from '../../data/mockData';
 import { PLATFORM_ROLE_LABELS, type PlatformRole } from '../../lib/authRoles';
@@ -19,6 +20,7 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const validatePassword = (password: string) => {
     return password.length >= 6;
@@ -26,35 +28,36 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMsg(null);
     setIsLoading(true);
 
     if (!formData.email) {
-      alert('Please enter your email address.');
+      setErrorMsg('Please enter your email address.');
       setIsLoading(false);
       return;
     }
     
     if (!validatePassword(formData.password)) {
-      alert('Password must be at least 6 characters.');
+      setErrorMsg('Password must be at least 6 characters.');
       setIsLoading(false);
       return;
     }
     
     if (formData.password !== formData.confirmPassword) {
-      alert('Passwords do not match');
+      setErrorMsg('Passwords do not match.');
       setIsLoading(false);
       return;
     }
     
     if (!formData.termsAccepted) {
-      alert('Please accept the terms');
+      setErrorMsg('Please accept the terms.');
       setIsLoading(false);
       return;
     }
 
     try {
       if (!supabase) {
-        alert('Authentication is unavailable because the app is not configured.');
+        setErrorMsg('Authentication is unavailable because the app is not configured.');
         setIsLoading(false);
         return;
       }
@@ -71,7 +74,9 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
       });
 
       if (error) {
-        alert('Sign up note: ' + (error.message || 'Please try again.'));
+        // Real server error, mapped to an actionable message (e.g.
+        // "This email address is already registered…" instead of a raw code).
+        setErrorMsg(friendlyAuthErrorMessage(error, 'Sign up failed. Please try again.'));
       } else if (data.session && data.user) {
         try {
           const seededProfile = await waitForProfile(supabase, data.user.id, { attempts: 6, delayMs: 350 });
@@ -88,10 +93,10 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
       } else if (data.user) {
         // Email confirmation still enabled — no session until the user
         // confirms. Honest message (no fake auto-login claim).
-        alert(`Registration submitted for the ${PLATFORM_ROLE_LABELS[formData.role]} role. Please confirm the account from the link in your email, then log in.`);
+        setErrorMsg(`Registration submitted for the ${PLATFORM_ROLE_LABELS[formData.role]} role. Please confirm the account from the link in your email, then log in.`);
       }
     } catch (err: any) {
-      alert('Sign up server notice: ' + (err?.message || 'Connection offline or rate limit reached.'));
+      setErrorMsg(friendlyAuthErrorMessage(err, 'Connection offline or rate limit reached. Please try again.'));
     } finally {
       setIsLoading(false);
     }
@@ -166,6 +171,10 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
             <input type="checkbox" required onChange={(e) => setFormData({...formData, termsAccepted: e.target.checked})} className="rounded border-[#e8e8e8] text-[#e6007e] focus:ring-[#e6007e]" />
             <span>I accept the <span className="text-[#e6007e] font-bold">Terms & Conditions</span></span>
           </label>
+
+          {errorMsg && (
+            <p className={`text-xs ml-1 font-medium ${errorMsg.startsWith('Registration submitted') ? 'text-emerald-600' : 'text-rose-600'}`}>{errorMsg}</p>
+          )}
 
           <button className="w-full bg-[#e6007e] text-white rounded-xl py-3.5 font-bold hover:bg-[#b90064] transition-colors mt-2 active:scale-[0.98] disabled:opacity-70 flex items-center justify-center gap-2" type="submit" disabled={isLoading || signedIn}>
             {(isLoading || signedIn) && <span className="material-symbols-outlined animate-spin text-xl">progress_activity</span>}

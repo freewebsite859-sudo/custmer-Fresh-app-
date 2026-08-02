@@ -9,6 +9,7 @@ import { fetchPublicSalons } from './lib/salonRepository';
 import { createCustomerBooking, createAdvanceOrder, loadRazorpayCheckout, openRazorpayAdvanceCheckout, listCustomerBookings, subscribeToCustomerBookings, CustomerBookingRow } from './lib/bookingRepository';
 import { loadProfile, waitForProfile, updateProfile, uploadAvatar, avatarUrlWithVersion, subscribeToProfile, CustomerProfile, ProfilePatch } from './lib/profileRepository';
 import { loadFavorites, setFavorite, subscribeToFavorites } from './lib/favoritesRepository';
+import { loadReviews, saveReview, subscribeToReviews } from './lib/reviewsRepository';
 import { loadSettings, saveSettings, settingsFromLegacyLocalStorage, SETTINGS_DEFAULTS } from './lib/settingsRepository';
 import { loadAddresses, importLegacyAddresses } from './lib/addressesRepository';
 import { loadPaymentMethods, importLegacyPaymentMethods, addUpiMethod } from './lib/paymentMethodsRepository';
@@ -316,10 +317,10 @@ export default function App() {
   const [localOnlyBookings, setLocalOnlyBookings] = useState<Booking[]>([]);
   const [reviewedBookingIds, setReviewedBookingIds] = useState<string[]>([]);
 
-  // Reviews + referral tracking are session-scoped in-memory state. They are
-  // NOT persisted to localStorage (business data), and the shared schema has
-  // no reviews/referrals table yet — cross-device persistence for these two
-  // features needs a schema addition (tracked as a Phase 1 remaining issue).
+  // Reviews are persisted to the shared Supabase `customer_reviews` table
+  // (see lib/reviewsRepository.ts + db/customer_reviews.sql) and hydrated on
+  // every login — they survive refresh and sync across devices. Referral
+  // tracking stays session-scoped in-memory (no schema for it yet).
   const [serviceReviewsBySalon, setServiceReviewsBySalon] = useState<Record<string, ServiceReview[]>>({});
   const [referralCode, setReferralCode] = useState<string | null>(null);
   const [invitedFriends, setInvitedFriends] = useState<ReferralFriend[]>([]);
@@ -407,6 +408,28 @@ export default function App() {
       setServerBookingItems(serviceIdsByBooking);
     } catch (e: any) {
       console.warn('Bookings sync notice:', e?.message || e);
+    }
+  }, [user?.id]);
+
+  // Reviews hydrate from the shared `customer_reviews` table. The "reviewed"
+  // flag on past bookings is reconstructed from the persisted reviews'
+  // booking_id, so it also survives refresh (graceful no-op if table missing).
+  const refreshReviews = React.useCallback(async () => {
+    if (!supabase || !user) return;
+    try {
+      const rows = await loadReviews(supabase, user.id);
+      const bySalon: Record<string, ServiceReview[]> = {};
+      const reviewedIds: string[] = [];
+      for (const review of rows) {
+        bySalon[review.salonId] = [...(bySalon[review.salonId] ?? []), review];
+        if (review.bookingId && !reviewedIds.includes(review.bookingId)) {
+          reviewedIds.push(review.bookingId);
+        }
+      }
+      setServiceReviewsBySalon(bySalon);
+      setReviewedBookingIds((prev) => [...new Set([...prev, ...reviewedIds])]);
+    } catch (e: any) {
+      console.warn('Reviews sync notice:', e?.message || e);
     }
   }, [user?.id]);
 
@@ -506,8 +529,8 @@ export default function App() {
         // builds on every login, not just first migration.
         purgeObsoleteBusinessKeys();
 
-        // 3) Hydrate favourites / bookings / notifications from the server
-        await Promise.all([refreshFavorites(), refreshBookings()]);
+        // 3) Hydrate favourites / bookings / reviews / notifications from the server
+        await Promise.all([refreshFavorites(), refreshBookings(), refreshReviews()]);
         try {
           const serverNotifs = await loadServerNotifications(client, uid);
           if (!cancelled) {
@@ -525,6 +548,7 @@ export default function App() {
           unsubs.push(subscribeToProfile(client, uid, (p) => setProfile(p)));
           unsubs.push(subscribeToFavorites(client, uid, refreshFavorites));
           unsubs.push(subscribeToCustomerBookings(client, uid, refreshBookings));
+          unsubs.push(subscribeToReviews(client, uid, refreshReviews));
           unsubs.push(subscribeToServerNotifications(client, uid, (n) => {
             setNotifications((prev) => [n, ...prev.filter((x) => x.id !== n.id)]);
           }));
@@ -538,7 +562,7 @@ export default function App() {
       cancelled = true;
       unsubs.forEach((unsub) => unsub());
     };
-  }, [user?.id, refreshFavorites, refreshBookings]);
+  }, [user?.id, refreshFavorites, refreshBookings, refreshReviews]);
 
   // Profile write handlers shared with screens (UPDATE-only; task STEP 10)
   const handleSaveProfile = React.useCallback(async (patch: ProfilePatch): Promise<boolean> => {
@@ -842,13 +866,21 @@ export default function App() {
     const created: ServiceReview = {
       ...newRev,
       salonId,
-      id: `sr-${Date.now()}`,
+      id: `sr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       date: 'Just now',
     };
+    // Optimistic UI update + persisted write to the shared table. If the
+    // write fails (offline / table not provisioned), the review still shows
+    // for this session and the error is logged, never thrown to the UI.
     setServiceReviewsBySalon((prev) => ({
       ...prev,
       [salonId]: [created, ...(prev[salonId] ?? [])],
     }));
+    if (supabase && user) {
+      saveReview(supabase, user.id, created).catch((e: any) => {
+        console.warn('Review save notice:', e?.message || e);
+      });
+    }
   };
 
   const triggerPushNotificationForBooking = (bookingId?: string) => {
