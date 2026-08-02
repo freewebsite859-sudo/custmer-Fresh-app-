@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { roleLabel } from '../../lib/authRoles';
 
@@ -6,16 +6,15 @@ interface RoleAssignedConflictProps {
   existingRole?: string;
   onLogin: () => void;
   onUseAnotherEmail: () => void;
-  onContactSupport: () => void;
 }
 
 export const RoleAssignedConflict: React.FC<RoleAssignedConflictProps> = ({
   existingRole = 'Existing Role',
   onLogin,
   onUseAnotherEmail,
-  onContactSupport,
 }) => {
   const existingRoleLabel = roleLabel(existingRole);
+  const [showHelp, setShowHelp] = useState(false);
 
   return (
     <div className="fixed inset-0 z-[60] bg-[#fcf9f8] text-[#26181c] font-sans overflow-hidden flex flex-col">
@@ -83,12 +82,32 @@ export const RoleAssignedConflict: React.FC<RoleAssignedConflictProps> = ({
 
         {/* Help Link */}
         <button 
-          onClick={onContactSupport}
+          onClick={() => setShowHelp((v) => !v)}
           className="mt-10 text-xs font-bold text-[#5a3f47] flex items-center gap-1 opacity-70 hover:opacity-100 transition-opacity"
+          type="button"
         >
           <span className="material-symbols-outlined text-sm">help</span>
           Need help merging accounts?
         </button>
+
+        {showHelp && (
+          <div className="mt-4 w-full max-w-[320px] rounded-2xl bg-white border border-[#f3c2dc] p-4 text-left shadow-sm animate-fadeIn">
+            <p className="text-xs text-[#5a3f47] leading-relaxed">
+              Accounts cannot be merged automatically. One email can hold only one role.
+            </p>
+            <p className="text-xs text-[#5a3f47] leading-relaxed mt-2">
+              To use this email with a different role, first{" "}
+              <span className="font-bold text-[#e6007e]">Login to your existing account</span>{" "}
+              (the role already linked to it), then sign out and register the new role with another email ID.
+            </p>
+            <p className="text-xs text-[#5a3f47] leading-relaxed mt-2">
+              If you believe this is a mistake, please contact support at{" "}
+              <a href="mailto:support@nexora.in" className="font-bold text-[#e6007e] underline">
+                support@nexora.in
+              </a>.
+            </p>
+          </div>
+        )}
       </main>
     </div>
   );

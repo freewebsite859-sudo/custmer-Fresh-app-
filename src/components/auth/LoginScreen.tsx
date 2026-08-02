@@ -115,12 +115,12 @@ export const LoginScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}
         {/* Form */}
         <form onSubmit={handleLogin} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-[#26181c] ml-1" htmlFor="identifier">Mobile Number or Email</label>
+            <label className="text-xs font-semibold text-[#26181c] ml-1" htmlFor="identifier">Email Address</label>
             <input 
               className="w-full bg-[#fcf9f8] border border-[#e8e8e8] rounded-xl px-4 py-3.5 text-sm text-[#26181c] focus:outline-none focus:border-[#e6007e] focus:ring-1 focus:ring-[#e6007e] transition-colors" 
               id="identifier" 
-              placeholder="e.g. 9876543210 or name@domain.com" 
-              type="text"
+              placeholder="name@domain.com" 
+              type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
