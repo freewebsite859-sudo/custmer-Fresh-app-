@@ -169,6 +169,8 @@ export interface ServiceReview {
   date: string;
   comment: string;
   verifiedBooking?: boolean;
+  /** Booking that this review was written for (when submitted from a past booking). */
+  bookingId?: string;
 }
 
 export interface WaitlistEntry {

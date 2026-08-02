@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import { friendlyAuthErrorMessage } from '../../lib/authErrors';
 import { Eye, EyeOff } from 'lucide-react';
 import { LOGO_SQUARE } from '../../data/mockData';
 
@@ -22,11 +23,9 @@ export const LoginScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}
       }
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) {
-        if (error.message?.toLowerCase().includes('rate') || error.status === 429) {
-          setErrorMsg('Auth rate limit reached. Please wait a moment and try again.');
-        } else {
-          setErrorMsg('Invalid credentials. Please check your email and password.');
-        }
+        // Show the REAL Supabase error (mapped to an actionable message),
+        // e.g. "Email not confirmed yet…" vs "Invalid login credentials…".
+        setErrorMsg(friendlyAuthErrorMessage(error, 'Login failed. Please try again.'));
       }
     } catch (err: any) {
       setErrorMsg('Login request failed. Please check your connection and try again.');
@@ -45,7 +44,7 @@ export const LoginScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}
         provider: 'google',
       });
       if (error) {
-        setErrorMsg('Google login could not be started. Please try again.');
+        setErrorMsg(friendlyAuthErrorMessage(error, 'Google login could not be started. Please try again.'));
       }
     } catch (err) {
       setErrorMsg('Google login could not be started. Please try again.');
@@ -65,7 +64,7 @@ export const LoginScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth}
       redirectTo: `${window.location.origin}/reset-password`,
     });
     if (error) {
-      alert(error.message);
+      alert(friendlyAuthErrorMessage(error, 'Could not send a password reset link. Please try again.'));
     } else {
       alert('Password reset link has been sent to your email.');
     }

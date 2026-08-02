@@ -453,7 +453,7 @@ export const BookingsScreen: React.FC<BookingsScreenProps> = ({
           preselectedServiceId={reviewModalBooking.services[0]?.id}
           authorName={customerName || 'Customer'}
           onSubmitReview={(newReview) => {
-            onAddReview(reviewModalBooking.salonId, newReview);
+            onAddReview(reviewModalBooking.salonId, { ...newReview, bookingId: reviewModalBooking.id });
             onMarkBookingReviewed(reviewModalBooking.id);
           }}
         />

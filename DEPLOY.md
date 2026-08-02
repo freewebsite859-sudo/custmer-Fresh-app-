@@ -31,6 +31,29 @@ Set these in **Vercel → Project → Settings → Environment Variables** (all 
 4. Add the environment variables from the table above.
 5. **Deploy.** Node.js 20.x is the current Vercel default and works with this repo.
 
+## Post-deploy: reviews persistence (recommended)
+
+Customer service reviews are written to the shared `customer_reviews` table in the Supabase project. The app degrades gracefully (reviews stay session-only) until the table exists, so **run this once** in Supabase → SQL Editor:
+
+```sql
+-- full script: db/customer_reviews.sql
+create table if not exists public.customer_reviews (
+  id text primary key,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  salon_id text not null,
+  service_id text,
+  service_name text not null,
+  author text not null,
+  rating smallint not null check (rating between 1 and 5),
+  comment text not null,
+  verified_booking boolean not null default false,
+  booking_id text,
+  created_at timestamptz not null default now()
+);
+alter table public.customer_reviews enable row level security;
+-- + RLS policies (select/insert/update/delete own rows) and realtime, see the file.
+```
+
 ## Post-deploy: Supabase dashboard config (REQUIRED for signup/login to work)
 
 These live in the Supabase project (`qwaehqsmodekbgvnaavz`) dashboard — they cannot be set from this repo:
