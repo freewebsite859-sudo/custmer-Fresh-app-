@@ -34,6 +34,15 @@ function rowToAppNotification(row: NotificationRow): AppNotification {
   };
 }
 
+const isMissingTableError = (error: { code?: string; message?: string } | null): boolean => {
+  if (!error) return false;
+  return (
+    error.code === '42P01' ||
+    error.code === 'PGRST205' ||
+    /could not find a table|relation .* does not exist/i.test(error.message || '')
+  );
+};
+
 export async function loadServerNotifications(
   client: SupabaseClient,
   userId: string,
@@ -44,7 +53,10 @@ export async function loadServerNotifications(
     .eq('recipient_user_id', userId)
     .order('created_at', { ascending: false })
     .limit(50);
-  if (error) throw error;
+  if (error) {
+    if (isMissingTableError(error)) return [];
+    throw error;
+  }
   return (data ?? []).map((row) => rowToAppNotification(row as NotificationRow));
 }
 

@@ -61,7 +61,7 @@ export async function loadProfile(
   if (error) {
     // Defensive fallback: if the shared schema has no rewards/wallet columns
     // yet, still load the profile without them (never block login on them).
-    if (error.code === 'PGRST204' || /could not find/i.test(error.message)) {
+    if (error.code === 'PGRST204' || /could not find|column|does not exist/i.test(error.message)) {
       const { data: safeData, error: safeError } = await client
         .from('profiles')
         .select(SAFE_PROFILE_COLUMNS)
@@ -117,7 +117,19 @@ export async function updateProfile(
     .eq('id', userId)
     .select(PROFILE_COLUMNS)
     .single();
-  if (error) throw error;
+  if (error) {
+    if (error.code === 'PGRST204' || /could not find|column|does not exist/i.test(error.message)) {
+      const { data: safeData, error: safeError } = await client
+        .from('profiles')
+        .update(safePatch)
+        .eq('id', userId)
+        .select(SAFE_PROFILE_COLUMNS)
+        .single();
+      if (safeError) throw safeError;
+      return safeData as CustomerProfile;
+    }
+    throw error;
+  }
   return data as CustomerProfile;
 }
 

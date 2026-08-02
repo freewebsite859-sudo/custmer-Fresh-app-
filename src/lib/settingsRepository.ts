@@ -54,6 +54,15 @@ export function normalizeSettings(raw: unknown): CustomerSettings {
   return merged;
 }
 
+const isMissingTableError = (error: { code?: string; message?: string } | null): boolean => {
+  if (!error) return false;
+  return (
+    error.code === '42P01' ||
+    error.code === 'PGRST205' ||
+    /could not find a table|relation .* does not exist/i.test(error.message || '')
+  );
+};
+
 export async function loadSettings(
   client: SupabaseClient,
   userId: string,
@@ -63,7 +72,10 @@ export async function loadSettings(
     .select('settings')
     .eq('user_id', userId)
     .maybeSingle();
-  if (error) throw error;
+  if (error) {
+    if (isMissingTableError(error)) return { settings: SETTINGS_DEFAULTS, exists: false };
+    throw error;
+  }
   return { settings: normalizeSettings(data?.settings), exists: Boolean(data) };
 }
 

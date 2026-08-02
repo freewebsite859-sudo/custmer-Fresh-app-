@@ -15,6 +15,15 @@ export interface SupportTicket {
 
 const TICKET_COLUMNS = 'id, subject, category, description, status, created_at';
 
+const isMissingTableError = (error: { code?: string; message?: string } | null): boolean => {
+  if (!error) return false;
+  return (
+    error.code === '42P01' ||
+    error.code === 'PGRST205' ||
+    /could not find a table|relation .* does not exist/i.test(error.message || '')
+  );
+};
+
 export async function loadSupportTickets(
   client: SupabaseClient,
   userId: string,
@@ -25,7 +34,10 @@ export async function loadSupportTickets(
     .eq('created_by', userId)
     .order('created_at', { ascending: false })
     .limit(50);
-  if (error) throw error;
+  if (error) {
+    if (isMissingTableError(error)) return [];
+    throw error;
+  }
   return (data ?? []).map((row: any) => ({
     id: String(row.id),
     subject: String(row.subject ?? 'Support request'),
