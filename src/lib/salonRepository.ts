@@ -105,6 +105,11 @@ export async function fetchPublicSalons(client: SupabaseClient): Promise<Salon[]
     client
       .from('salons')
       .select('id, slug, name, description, business_category, gender_category, phone, address, area, city, state')
+      // Approved/published only — never drafts: owner-approved (verified),
+      // active, not soft-deleted.
+      .eq('verified', true)
+      .eq('is_active', true)
+      .is('deleted_at', null)
       .limit(FETCH_LIMIT),
     client
       .from('services')
@@ -112,7 +117,11 @@ export async function fetchPublicSalons(client: SupabaseClient): Promise<Salon[]
       .eq('is_active', true)
       .eq('is_bookable_online', true)
       .is('deleted_at', null),
-    client.from('salon_public_websites').select('salon_id, config'),
+    // Only published public sites count as "live" shops.
+    client
+      .from('salon_public_websites')
+      .select('salon_id, config')
+      .eq('is_published', true),
   ]);
 
   if (salonsRes.error) throw salonsRes.error;
@@ -131,7 +140,13 @@ export async function fetchPublicSalons(client: SupabaseClient): Promise<Salon[]
     siteBySalon.set(row.salon_id, row.config || {});
   }
 
-  return ((salonsRes.data || []) as SalonRow[]).map((row) => {
+  // A shop is listed only when it has a published public website row too
+  // (owner approved + published = live). Drafts are never shown.
+  const publishedSiteIds = new Set(siteBySalon.keys());
+
+  return ((salonsRes.data || []) as SalonRow[])
+    .filter((row) => publishedSiteIds.has(row.id))
+    .map((row) => {
     const cfg = siteBySalon.get(row.id) || {};
     const profile = (cfg.profile || {}) as Record<string, unknown>;
     const services = servicesBySalon.get(row.id) || [];
@@ -162,7 +177,7 @@ export async function fetchPublicSalons(client: SupabaseClient): Promise<Salon[]
       rating: 0, // no ratings source yet — UI shows "New" instead of a fake score
       reviewCount: 0,
       reviewsCount: 0,
-      verified: siteBySalon.has(row.id),
+      verified: true, // filtered above: verified + active + published site only
       isNew: true, // every live salon is new until a real ratings source exists
       image,
       gallery: photos.length > 0 ? photos : [image],
