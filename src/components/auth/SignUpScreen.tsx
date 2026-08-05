@@ -83,7 +83,9 @@ export const SignUpScreen: React.FC<{onToggleAuth: () => void}> = ({onToggleAuth
           if (seededProfile) {
             await updateProfile(supabase, data.user.id, {
               full_name: formData.fullName.trim() || formData.email.split('@')[0],
-              phone: formData.mobile.trim() || null,
+              phone: formData.mobile.trim()
+              ? `+91 ${formData.mobile.replace(/[^0-9]/g, '').slice(-10)}`
+              : null,
             });
           }
         } catch (profileError) {
