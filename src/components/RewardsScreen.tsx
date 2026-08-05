@@ -268,29 +268,17 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({
     onInvitedFriendsChange?.(updatedFriends);
 
     if (supabase) {
-      // Read the CURRENT server points first so rapid clicks never clobber a
-      // freshly credited balance (realtime pushes the new row back to the UI).
-      let currentPoints = profile.loyalty_points ?? 0;
-      try {
-        const { data: freshRow } = await supabase
-          .from('profiles')
-          .select('loyalty_points')
-          .eq('id', profile.id)
-          .maybeSingle();
-        if (freshRow && typeof (freshRow as any).loyalty_points === 'number') {
-          currentPoints = (freshRow as any).loyalty_points as number;
-        }
-      } catch (e) {
-        console.warn('Loyalty points read notice:', e);
-      }
-
-      const { error } = await supabase
-        .from('profiles')
-        .update({ loyalty_points: currentPoints + 250 })
-        .eq('id', profile.id);
+      // Phase 6: balance changes go through the server-side RPC only — the
+      // balance-guard trigger blocks direct profiles.update writes (verified:
+      // P0001). accrue_reward_points sets the trusted-writer marker and
+      // credits the shared profile atomically.
+      const { error } = await supabase.rpc('accrue_reward_points', {
+        p_points: 250,
+        p_reason: `Friend booking completed (${friend.name})`,
+      });
 
       if (error) {
-        console.error('Error updating loyalty points:', error);
+        console.error('Error accruing loyalty points:', error);
         triggerToast("Completed booking for " + friend.name + "! (Points credit pending)");
       } else {
         triggerToast("Booking completed! You earned +250 Glow Points! 🎉");
@@ -303,37 +291,16 @@ export const RewardsScreen: React.FC<RewardsScreenProps> = ({
   const handleRedeem = async (opt: { pts: number; discount: number; label: string }) => {
     if (!supabase || !profile) return;
 
-    // Read CURRENT server values first (same shared profiles row) so rapid
-    // actions never overwrite a newer balance with stale render-time numbers.
-    let currentPoints = profile.loyalty_points ?? 0;
-    let currentWalletPaise = profile.wallet_balance_paise ?? 0;
-    try {
-      const { data: freshRow } = await supabase
-        .from('profiles')
-        .select('loyalty_points, wallet_balance_paise')
-        .eq('id', profile.id)
-        .maybeSingle();
-      if (freshRow) {
-        const row = freshRow as Record<string, unknown>;
-        if (typeof row.loyalty_points === 'number') currentPoints = row.loyalty_points;
-        if (typeof row.wallet_balance_paise === 'number') currentWalletPaise = row.wallet_balance_paise;
-      }
-    } catch (e) {
-      console.warn('Rewards balance read notice:', e);
-    }
-
-    if (currentPoints < opt.pts) {
-      triggerToast('Not enough Glow Points for this voucher yet.');
-      return;
-    }
-
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        loyalty_points: currentPoints - opt.pts,
-        wallet_balance_paise: currentWalletPaise + opt.discount * 100,
-      })
-      .eq('id', profile.id);
+    // Phase 6: redemption goes through the server-side tier-locked RPC
+    // (redeem_loyalty_points). The live RPC accepts exactly the app's tiers:
+    // 500 pts → ₹100 (10000 paise), 1000 pts → ₹250 (25000 paise). It decrements
+    // points, credits the wallet and records the rewards row atomically — and
+    // rejects anything else (invalid tier / insufficient points).
+    const { error } = await supabase.rpc('redeem_loyalty_points', {
+      p_points: opt.pts,
+      p_wallet_credit_paise: opt.discount * 100,
+      p_title: opt.label,
+    });
 
     if (error) {
       console.error('Error redeeming rewards:', error);
