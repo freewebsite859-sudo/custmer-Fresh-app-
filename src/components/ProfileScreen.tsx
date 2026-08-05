@@ -828,7 +828,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       <AddCardModal isOpen={isAddCardOpen} onClose={() => setIsAddCardOpen(false)} onCardAdded={handleCardAdded} />
       <AddUpiModal isOpen={isAddUpiOpen} onClose={() => { setIsAddUpiOpen(false); setPrefilledUpiInput(''); }} onUpiAdded={handleUpiAdded} initialUpiInput={prefilledUpiInput} onOpenScanner={() => { setIsAddUpiOpen(false); setIsScanQrOpen(true); }} />
       <ScanUpiQrModal isOpen={isScanQrOpen} onClose={() => setIsScanQrOpen(false)} onUpiScanned={handleUpiAdded} onUpiParsed={(id) => { setPrefilledUpiInput(id); setIsScanQrOpen(false); setIsAddUpiOpen(true); }} />
-      <Modal isOpen={isInstallModalOpen} onClose={() => setIsInstallModalOpen(false)} title="Install Application"><InstallApp onClose={() => setIsInstallModalOpen(false)} onInstall={() => { setIsInstallModalOpen(false); triggerToast('App installed!'); }} /></Modal>
+      <Modal isOpen={isInstallModalOpen} onClose={() => setIsInstallModalOpen(false)} title="Install Application"><InstallApp onClose={() => setIsInstallModalOpen(false)} onInstall={async () => false /* no browser prompt here — guide will show */} /></Modal>
 
     </div>
   );

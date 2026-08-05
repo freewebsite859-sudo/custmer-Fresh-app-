@@ -120,7 +120,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       )}
 
       {showInstallModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs"><div className="absolute inset-0" onClick={() => setShowInstallModal(false)} /><div className="relative z-10 w-full max-w-sm"><InstallApp onClose={() => setShowInstallModal(false)} onInstall={() => { setShowInstallModal(false); triggerToast('Installed!'); }} /></div></div>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs"><div className="absolute inset-0" onClick={() => setShowInstallModal(false)} /><div className="relative z-10 w-full max-w-sm"><InstallApp onClose={() => setShowInstallModal(false)} onInstall={async () => false /* no browser prompt here — guide will show */} /></div></div>
       )}
 
       <div className="flex flex-col w-full pb-safe px-4 pt-4">

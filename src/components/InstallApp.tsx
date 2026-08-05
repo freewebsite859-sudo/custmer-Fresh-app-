@@ -11,7 +11,7 @@ const screenshots = [
 
 interface InstallAppProps {
   onClose?: () => void;
-  onInstall?: () => void;
+  onInstall?: () => Promise<boolean> | boolean | void;
   initialHelpTab?: HelpTabType;
 }
 
@@ -108,16 +108,29 @@ export const InstallApp: React.FC<InstallAppProps> = ({ onClose, onInstall, init
       });
     }, 150);
     
+    // Phase 6: the parent reports whether the browser install prompt was
+    // actually shown and accepted. If not (iOS Safari, in-app browsers,
+    // iframes, or the prompt was dismissed earlier), we must NOT show a fake
+    // success — we show the platform-specific manual "Add to Home Screen"
+    // guide instead.
+    let installed = false;
     if (onInstall) {
-      await onInstall();
+      const result = await onInstall();
+      installed = result === true;
     }
-    
+
     setTimeout(() => {
       clearInterval(interval);
       setInstallProgress(100);
       setTimeout(() => {
         setIsInstalling(false);
-        setIsSuccess(true);
+        if (installed) {
+          setIsSuccess(true);
+        } else {
+          // No browser prompt available — route the user to the manual guide
+          // for their platform (iOS Safari / Android Chrome / Desktop).
+          setShowHelpGuide(true);
+        }
       }, 500);
     }, 2000);
   };
