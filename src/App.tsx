@@ -1407,22 +1407,26 @@ export default function App() {
             setHasDismissedInSession(true);
             setIsPwaDismissedPermanently(localStorage.getItem('nexora_pwa_dismissed') === 'true');
           }} 
-          onInstall={() => {
+          onInstall={async () => {
             if (deferredPrompt) {
+              // Real browser install prompt (Android Chrome / desktop Chrome
+              // with beforeinstallprompt support).
               deferredPrompt.prompt();
-              deferredPrompt.userChoice.then((choiceResult: any) => {
-                if (choiceResult.outcome === 'accepted') {
-                  setDeferredPrompt(null);
-                  setIsAppInstalled(true);
-                  localStorage.setItem('nexora_app_installed', 'true');
-                }
-              });
-            } else {
-              setIsPwaDismissedPermanently(localStorage.getItem('nexora_pwa_dismissed') === 'true');
-              return;
+              const choiceResult: any = await deferredPrompt.userChoice;
+              if (choiceResult.outcome === 'accepted') {
+                setDeferredPrompt(null);
+                setIsAppInstalled(true);
+                localStorage.setItem('nexora_app_installed', 'true');
+                setIsInstallModalOpen(false);
+                return true;
+              }
+              return false;
             }
+            // No prompt available (iOS Safari, in-app browser, iframe, or the
+            // prompt was dismissed): keep the modal open so the manual
+            // platform guide is shown — never a fake success.
             setIsPwaDismissedPermanently(localStorage.getItem('nexora_pwa_dismissed') === 'true');
-            setIsInstallModalOpen(false);
+            return false;
           }} 
         />
       </Modal>
