@@ -119,6 +119,10 @@ export interface UserLocation {
   area: string;
   address?: string;
   isGPS: boolean;
+  lat?: number;
+  lng?: number;
+  accuracy?: number;
+  lastUpdated?: number;
 }
 
 export interface Address {

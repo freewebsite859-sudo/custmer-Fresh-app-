@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { UserLocation } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { JAIPUR_LOCATIONS, JAIPUR_ZONES } from '../data/locations';
@@ -6,6 +6,7 @@ import {
   LOCATION_PIN_URL,
   LOGO_SQUARE,
 } from '../data/mockData';
+import { getLiveLocation, isGeolocationAvailable } from '../utils/geolocation';
 
 interface LocationSelectionModalProps {
   currentLocation: UserLocation;
@@ -28,6 +29,8 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
   const [isLocating, setIsLocating] = useState<boolean>(false);
   const [showDeniedModal, setShowDeniedModal] = useState<boolean>(false);
   const [hasInteracted, setHasInteracted] = useState<boolean>(false);
+  const [locationError, setLocationError] = useState<string>('');
+  const [liveCoords, setLiveCoords] = useState<{lat: number; lng: number; accuracy: number} | null>(null);
 
   const zoneRef = useRef<HTMLDivElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
@@ -47,18 +50,39 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleUseGPS = () => {
+  const handleUseGPS = async () => {
     setIsLocating(true);
-    setTimeout(() => {
-      setIsLocating(false);
+    setLocationError('');
+
+    try {
+      // Get real live location (Browser GPS → Google API fallback → Reverse Geocode)
+      const position = await getLiveLocation();
+
       const gpsLocation: UserLocation = {
-        city: 'Jaipur',
-        area: 'Mansarovar',
-        address: 'Current Location via GPS',
+        city: position.city || 'Jaipur',
+        area: position.area || 'Current Location',
+        address: position.address || `GPS: ${position.lat.toFixed(4)}, ${position.lng.toFixed(4)}`,
         isGPS: true,
+        lat: position.lat,
+        lng: position.lng,
+        accuracy: position.accuracy,
+        lastUpdated: position.timestamp,
       };
+
+      setLiveCoords({
+        lat: position.lat,
+        lng: position.lng,
+        accuracy: position.accuracy,
+      });
+
       onSelectLocation(gpsLocation);
-    }, 1200);
+    } catch (error: any) {
+      console.error('Live location failed:', error);
+      setLocationError(error.message || 'Failed to get your location');
+      setShowDeniedModal(true);
+    } finally {
+      setIsLocating(false);
+    }
   };
 
   const handleConfirmLocation = () => {
@@ -135,7 +159,7 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
                     <span className="material-symbols-outlined animate-spin text-[20px]">
                       progress_activity
                     </span>
-                    Locating...
+                    Getting your live location...
                   </>
                 ) : (
                   <>
@@ -144,6 +168,29 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
                   </>
                 )}
               </button>
+
+              {/* Live Location Info */}
+              {liveCoords && (
+                <div className="w-full mt-3 p-3 bg-green-50 border border-green-200 rounded-xl">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                    <span className="text-[12px] font-bold text-green-700">Live Location Detected</span>
+                  </div>
+                  <p className="text-[11px] text-green-600">
+                    📍 Lat: {liveCoords.lat.toFixed(6)}, Lng: {liveCoords.lng.toFixed(6)}
+                  </p>
+                  <p className="text-[11px] text-green-600">
+                    🎯 Accuracy: ±{Math.round(liveCoords.accuracy)}m
+                  </p>
+                </div>
+              )}
+
+              {/* Location Error */}
+              {locationError && !showDeniedModal && (
+                <div className="w-full mt-3 p-3 bg-red-50 border border-red-200 rounded-xl">
+                  <p className="text-[12px] text-red-600 font-medium">⚠️ {locationError}</p>
+                </div>
+              )}
 
               <button
                 onClick={() => setViewMode('picker')}
@@ -351,11 +398,29 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
             <div className="mt-4 p-4 rounded-2xl border border-dashed border-[#e8e8e8] bg-[#fcf9f8]">
               <button
                 onClick={handleUseGPS}
+                disabled={isLocating}
                 className="w-full flex items-center justify-center gap-2 text-[14px] font-bold text-[#e6007e] active:scale-95 transition-all"
               >
-                <span className="material-symbols-outlined text-[20px]">my_location</span>
-                Or use Current Location via GPS
+                {isLocating ? (
+                  <>
+                    <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
+                    Detecting live location...
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-[20px]">my_location</span>
+                    Or use Current Location via GPS
+                  </>
+                )}
               </button>
+              {liveCoords && (
+                <div className="mt-2 flex items-center justify-center gap-1">
+                  <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                  <span className="text-[10px] text-green-600 font-medium">
+                    GPS active • ±{Math.round(liveCoords.accuracy)}m accuracy
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Bottom Sticky Action */}
@@ -391,9 +456,9 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
             <div className="w-14 h-14 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mb-3">
               <span className="material-symbols-outlined text-[28px]">location_disabled</span>
             </div>
-            <h3 className="text-base font-bold text-[#26181c] mb-1">Location Access Denied</h3>
+            <h3 className="text-base font-bold text-[#26181c] mb-1">Location Access Required</h3>
             <p className="text-xs text-[#5a3f47] mb-5">
-              Please enable location permissions in browser settings to auto-detect nearby salons.
+              {locationError || 'Please enable location permissions in your browser settings to auto-detect nearby salons. We use GPS + Google Geolocation for accurate results.'}
             </p>
             <button
               onClick={() => {
