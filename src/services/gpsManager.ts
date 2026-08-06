@@ -2,14 +2,18 @@
  * GPS MANAGER
  * 
  * Auto-detection lifecycle:
- *   1. App starts → request GPS permission
- *   2. Get coordinates → detect locality offline (GeoJSON PIP)
- *   3. Store: area, zone, pincode, coordinates
- *   4. Refresh only if user moves > 300 meters
- *   5. Cache last detected area
+ *   1. App starts → load cached location INSTANTLY
+ *   2. Request GPS permission
+ *   3. Get coordinates → detect locality offline (GeoJSON PIP)
+ *   4. Store: area, zone, pincode, coordinates
+ *   5. Refresh ONLY if user moves > 300 meters
  *   6. If permission denied → manual selection mode
  * 
- * No API calls for area detection.
+ * Key behavior:
+ *   - Cached area shown INSTANTLY on app start
+ *   - GPS detection happens in background
+ *   - Area ONLY changes if user physically moves 300m+
+ *   - GPS jitter (low accuracy) does NOT trigger re-detection
  */
 
 import GeoService, { DetectionResult, CityIndex } from './geoService';
@@ -41,8 +45,8 @@ export type LocationListener = (state: LocationState) => void;
 // ═══════════════════════════════════════
 
 const CACHE_KEY = 'nexora_gps_location';
-const MOVE_THRESHOLD_M = 300; // Re-detect after 300m movement
-const WATCH_INTERVAL_MS = 15000; // Check position every 15s
+const MOVE_THRESHOLD_M = 300;       // Re-detect after 300m movement
+const MIN_ACCURACY_M = 100;         // Ignore GPS readings worse than 100m accuracy
 const CITY_SLUG = 'jaipur';
 
 // ═══════════════════════════════════════
@@ -50,7 +54,7 @@ const CITY_SLUG = 'jaipur';
 // ═══════════════════════════════════════
 
 function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371000; // Earth radius in meters
+  const R = 6371000;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLng = ((lng2 - lng1) * Math.PI) / 180;
   const a =
@@ -70,8 +74,9 @@ function loadCache(): LocationState | null {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw) as LocationState;
-    // Validate cache has required fields
-    if (data.lat && data.lng && data.area) return data;
+    if (data.area && typeof data.lat === 'number' && typeof data.lng === 'number') {
+      return data;
+    }
     return null;
   } catch {
     return null;
@@ -94,23 +99,18 @@ export function clearCache(): void {
 
 class GpsManager {
   private state: LocationState | null = null;
+  private lastDetectedLat = 0;
+  private lastDetectedLng = 0;
   private listeners: Set<LocationListener> = new Set();
   private watchId: number | null = null;
   private geoIndex: CityIndex | null = null;
   private initialized = false;
   private initPromise: Promise<LocationState> | null = null;
+  private geoLoaded = false;
 
   /**
    * Initialize GPS manager.
    * Call once on app start.
-   * 
-   * Flow:
-   *   1. Load cached location (instant)
-   *   2. Load GeoJSON (async, cached)
-   *   3. Request GPS permission
-   *   4. If granted → detect area → notify listeners
-   *   5. If denied → set manual mode → notify listeners
-   *   6. Start watching for 300m movement
    */
   async init(): Promise<LocationState> {
     if (this.initPromise) return this.initPromise;
@@ -119,21 +119,24 @@ class GpsManager {
   }
 
   private async _init(): Promise<LocationState> {
-    // Step 1: Load cached location (instant fallback)
+    // ═══ STEP 1: Load cached location INSTANTLY ═══
     const cached = loadCache();
-    if (cached) {
+    if (cached && cached.area) {
       this.state = { ...cached, source: 'cache' };
+      this.lastDetectedLat = cached.lat;
+      this.lastDetectedLng = cached.lng;
       this.notify();
     }
 
-    // Step 2: Load GeoJSON (async, cached after first load)
+    // ═══ STEP 2: Load GeoJSON (async, cached) ═══
     try {
       this.geoIndex = await GeoService.loadCity(CITY_SLUG);
+      this.geoLoaded = true;
     } catch (e) {
       console.warn('[GpsManager] GeoJSON load failed:', e);
     }
 
-    // Step 3: Request GPS permission
+    // ═══ STEP 3: Request GPS ═══
     if (!('geolocation' in navigator)) {
       return this.handleNoGps();
     }
@@ -141,10 +144,10 @@ class GpsManager {
     return new Promise((resolve) => {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          this.handlePosition(pos);
+          const result = this.handlePosition(pos, true);
           this.startWatching();
           this.initialized = true;
-          resolve(this.state!);
+          resolve(result);
         },
         (err) => {
           const result = this.handleGpsError(err);
@@ -153,30 +156,37 @@ class GpsManager {
         },
         {
           enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 60000,
+          timeout: 20000,
+          maximumAge: 30000,
         }
       );
     });
   }
 
   /**
-   * Handle successful GPS position
+   * Handle GPS position update.
+   * Only re-detects area if user moved > 300m.
    */
-  private handlePosition(pos: GeolocationPosition): void {
+  private handlePosition(pos: GeolocationPosition, forceDetect = false): LocationState {
     const { latitude: lat, longitude: lng, accuracy } = pos.coords;
     const timestamp = pos.timestamp;
 
-    // Check if moved > 300m from last position
-    if (this.state?.lat && this.state?.lng) {
-      const moved = distanceMeters(this.state.lat, this.state.lng, lat, lng);
+    // ═══ FILTER: Ignore bad GPS readings ═══
+    // If accuracy is worse than 100m, skip (jitter protection)
+    if (accuracy > MIN_ACCURACY_M && !forceDetect) {
+      return this.state || this.createDefaultState();
+    }
+
+    // ═══ CHECK: Has user moved > 300m? ═══
+    if (!forceDetect && this.lastDetectedLat !== 0 && this.lastDetectedLng !== 0) {
+      const moved = distanceMeters(this.lastDetectedLat, this.lastDetectedLng, lat, lng);
       if (moved < MOVE_THRESHOLD_M) {
-        // Not moved enough — keep existing detection
-        return;
+        // User hasn't moved enough — keep current area
+        return this.state || this.createDefaultState();
       }
     }
 
-    // Detect area offline using GeoJSON PIP
+    // ═══ DETECT: Run PIP on new coordinates ═══
     let detection: DetectionResult | null = null;
     if (this.geoIndex) {
       detection = this.geoIndex.detect(lat, lng);
@@ -186,8 +196,8 @@ class GpsManager {
       lat,
       lng,
       accuracy,
-      area: detection?.area || this.state?.area || 'Jaipur',
-      zone: detection?.zone || this.state?.zone || 'Jaipur',
+      area: detection?.area || this.state?.area || '',
+      zone: detection?.zone || this.state?.zone || '',
       pincode: detection?.pincode || this.state?.pincode || '',
       featureId: detection?.featureId || '',
       confidence: detection?.confidence || 'outside',
@@ -199,8 +209,12 @@ class GpsManager {
     };
 
     this.state = newState;
+    this.lastDetectedLat = lat;
+    this.lastDetectedLng = lng;
     saveCache(newState);
     this.notify();
+
+    return newState;
   }
 
   /**
@@ -218,53 +232,59 @@ class GpsManager {
   }
 
   /**
-   * GPS not available
+   * GPS not available — use cache if available
    */
   private handleNoGps(): LocationState {
     const cached = loadCache();
-    const state: LocationState = {
-      lat: cached?.lat || 0,
-      lng: cached?.lng || 0,
-      accuracy: 0,
-      area: cached?.area || '',
-      zone: cached?.zone || '',
-      pincode: cached?.pincode || '',
-      featureId: '',
-      confidence: 'outside',
-      city: 'Jaipur',
-      timestamp: Date.now(),
-      source: cached ? 'cache' : 'manual',
-      permissionDenied: false,
-      needsManualSelection: !cached,
-    };
+    if (cached && cached.area) {
+      this.state = { ...cached, source: 'cache' };
+      this.notify();
+      return this.state;
+    }
+    const state = this.createDefaultState();
+    state.needsManualSelection = true;
     this.state = state;
     this.notify();
     return state;
   }
 
   /**
-   * Permission denied — switch to manual mode
+   * Permission denied — use cache or manual mode
    */
   private handlePermissionDenied(): LocationState {
     const cached = loadCache();
-    const state: LocationState = {
-      lat: cached?.lat || 0,
-      lng: cached?.lng || 0,
+    if (cached && cached.area) {
+      this.state = { ...cached, source: 'cache', permissionDenied: true };
+      this.notify();
+      return this.state;
+    }
+    const state = this.createDefaultState();
+    state.permissionDenied = true;
+    state.needsManualSelection = true;
+    this.state = state;
+    this.notify();
+    return state;
+  }
+
+  /**
+   * Create default empty state
+   */
+  private createDefaultState(): LocationState {
+    return {
+      lat: 0,
+      lng: 0,
       accuracy: 0,
-      area: cached?.area || '',
-      zone: cached?.zone || '',
-      pincode: cached?.pincode || '',
+      area: '',
+      zone: '',
+      pincode: '',
       featureId: '',
       confidence: 'outside',
       city: 'Jaipur',
       timestamp: Date.now(),
-      source: cached ? 'cache' : 'manual',
-      permissionDenied: true,
-      needsManualSelection: !cached,
+      source: 'manual',
+      permissionDenied: false,
+      needsManualSelection: true,
     };
-    this.state = state;
-    this.notify();
-    return state;
   }
 
   /**
@@ -274,12 +294,12 @@ class GpsManager {
     if (this.watchId !== null) return;
 
     this.watchId = navigator.geolocation.watchPosition(
-      (pos) => this.handlePosition(pos),
+      (pos) => this.handlePosition(pos, false),
       () => {}, // Ignore watch errors silently
       {
-        enableHighAccuracy: false, // Low accuracy OK for movement detection
+        enableHighAccuracy: true,
         timeout: 30000,
-        maximumAge: WATCH_INTERVAL_MS,
+        maximumAge: 10000,
       }
     );
   }
@@ -299,7 +319,6 @@ class GpsManager {
    */
   subscribe(listener: LocationListener): () => void {
     this.listeners.add(listener);
-    // Immediately notify with current state
     if (this.state) {
       listener(this.state);
     }
@@ -312,7 +331,7 @@ class GpsManager {
   private notify(): void {
     if (!this.state) return;
     for (const listener of this.listeners) {
-      try { listener(this.state); } catch {}
+      try { listener({ ...this.state }); } catch {}
     }
   }
 
@@ -332,7 +351,7 @@ class GpsManager {
       city: 'Jaipur',
       timestamp: Date.now(),
       source: 'manual',
-      permissionDenied: this.state?.permissionDenied || false,
+      permissionDenied: false,
       needsManualSelection: false,
     };
     this.state = state;
@@ -356,13 +375,8 @@ class GpsManager {
     return new Promise((resolve) => {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          // Reset state to force re-detection
-          if (this.state) {
-            this.state.lat = 0;
-            this.state.lng = 0;
-          }
-          this.handlePosition(pos);
-          resolve(this.state);
+          const result = this.handlePosition(pos, true);
+          resolve(result);
         },
         () => resolve(this.state),
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
@@ -370,23 +384,14 @@ class GpsManager {
     });
   }
 
-  /**
-   * Check if GPS permission was denied
-   */
   isPermissionDenied(): boolean {
     return this.state?.permissionDenied || false;
   }
 
-  /**
-   * Check if manual selection is needed
-   */
   needsManualSelection(): boolean {
     return this.state?.needsManualSelection || false;
   }
 
-  /**
-   * Cleanup
-   */
   destroy(): void {
     this.stopWatching();
     this.listeners.clear();
