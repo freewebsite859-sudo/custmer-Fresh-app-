@@ -1,15 +1,22 @@
 /**
- * DYNAMIC GEO SERVICE
+ * POINT-IN-POLYGON DETECTION ENGINE
  * 
- * Loads GeoJSON city files from /geo/{city}.geojson
- * Supports multiple cities — just add a new .geojson file!
+ * Input:  latitude, longitude, GeoJSON polygons
+ * Output: Detected Area, Detected Zone
  * 
- * NO hardcoded locality names. Everything loaded dynamically.
+ * Rules:
+ *   1. Point inside polygon  → return that locality
+ *   2. No polygon match      → find nearest centroid
+ *   3. Distance < 5km        → return nearest locality
+ *   4. Distance >= 5km       → "Outside Jaipur Coverage"
  * 
- * Usage:
- *   const geo = await GeoService.loadCity('jaipur');
- *   const area = geo.detect(26.974, 75.724);
- *   console.log(area.name); // "Nangal Jaisabohra"
+ * Performance target: < 100ms per lookup
+ * 
+ * Optimizations:
+ *   - Spatial grid index (O(1) cell lookup instead of O(n) scan)
+ *   - Bounding box fast rejection
+ *   - Pre-computed centroids + bbox at load time
+ *   - Cached city index (load GeoJSON once)
  */
 
 // ═══════════════════════════════════════
@@ -38,40 +45,72 @@ export interface GeoCollection {
   features: GeoFeature[];
 }
 
-export interface DetectedArea {
-  id: string;
-  name: string;
+export interface DetectionResult {
+  found: boolean;
+  area: string;
   zone: string;
   pincode: string;
-  center: [number, number]; // [lng, lat]
-  distance: number;         // km from center
-  confidence: 'exact' | 'near' | 'approximate';
+  featureId: string;
+  confidence: 'exact' | 'nearest' | 'outside';
+  distanceFromCenter: number;  // km
+  centroid: [number, number];  // [lng, lat]
+  lookupMs: number;            // performance metric
 }
 
-export interface BoundingBox {
-  west: number;
-  south: number;
-  east: number;
-  north: number;
+export interface NearbyResult {
+  areas: Array<{
+    area: string;
+    zone: string;
+    pincode: string;
+    distance: number;
+  }>;
+  lookupMs: number;
 }
 
-// Internal cached feature with computed center & bbox
+// Internal indexed feature
 interface IndexedFeature {
   feature: GeoFeature;
-  center: [number, number];
-  bbox: BoundingBox;
+  centroid: [number, number];   // [lng, lat]
+  bbox: { w: number; s: number; e: number; n: number };
+  ring: number[][];
+}
+
+// Spatial grid cell
+interface GridCell {
+  featureIndices: number[];
 }
 
 // ═══════════════════════════════════════
-// POINT-IN-POLYGON ENGINE (Ray Casting)
+// CONSTANTS
 // ═══════════════════════════════════════
 
-function pointInPolygon(point: [number, number], polygon: number[][]): boolean {
-  const [x, y] = point;
+const MAX_DISTANCE_KM = 5;           // "Outside coverage" threshold
+const GRID_RESOLUTION = 0.01;        // ~1.1km per cell (good balance)
+const EARTH_RADIUS_KM = 6371;
+
+// ═══════════════════════════════════════
+// MATH HELPERS
+// ═══════════════════════════════════════
+
+function haversine(lng1: number, lat1: number, lng2: number, lat2: number): number {
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+    Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLng / 2) ** 2;
+  return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * Ray Casting algorithm — O(n) where n = vertices in polygon
+ */
+function pointInPolygon(x: number, y: number, ring: number[][]): boolean {
   let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, yi] = polygon[i];
-    const [xj, yj] = polygon[j];
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
     if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
       inside = !inside;
     }
@@ -79,248 +118,325 @@ function pointInPolygon(point: [number, number], polygon: number[][]): boolean {
   return inside;
 }
 
-function inBBox(point: [number, number], bbox: BoundingBox): boolean {
-  const [lng, lat] = point;
-  return lng >= bbox.west && lng <= bbox.east && lat >= bbox.south && lat <= bbox.north;
-}
-
-function haversine(lng1: number, lat1: number, lng2: number, lat2: number): number {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function computeBBox(coords: number[][]): BoundingBox {
-  let west = Infinity, south = Infinity, east = -Infinity, north = -Infinity;
-  for (const [lng, lat] of coords) {
-    if (lng < west) west = lng;
-    if (lng > east) east = lng;
-    if (lat < south) south = lat;
-    if (lat > north) north = lat;
-  }
-  return { west, south, east, north };
-}
-
-function computeCenter(coords: number[][]): [number, number] {
+function computeCentroid(ring: number[][]): [number, number] {
   let sumLng = 0, sumLat = 0;
-  for (const [lng, lat] of coords) {
-    sumLng += lng;
-    sumLat += lat;
+  // Exclude last point if it's duplicate of first (closed ring)
+  const len = ring[ring.length - 1][0] === ring[0][0] && ring[ring.length - 1][1] === ring[0][1]
+    ? ring.length - 1
+    : ring.length;
+  for (let i = 0; i < len; i++) {
+    sumLng += ring[i][0];
+    sumLat += ring[i][1];
   }
-  return [sumLng / coords.length, sumLat / coords.length];
+  return [sumLng / len, sumLat / len];
+}
+
+function computeBBox(ring: number[][]): { w: number; s: number; e: number; n: number } {
+  let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
+  for (const [lng, lat] of ring) {
+    if (lng < w) w = lng;
+    if (lng > e) e = lng;
+    if (lat < s) s = lat;
+    if (lat > n) n = lat;
+  }
+  return { w, s, e, n };
 }
 
 // ═══════════════════════════════════════
-// CITY CACHE
+// SPATIAL GRID INDEX
 // ═══════════════════════════════════════
 
-const cityCache = new Map<string, CityGeoIndex>();
+class SpatialGrid {
+  private grid = new Map<string, GridCell>();
+  private resolution: number;
+
+  constructor(resolution: number) {
+    this.resolution = resolution;
+  }
+
+  private key(lng: number, lat: number): string {
+    const gx = Math.floor(lng / this.resolution);
+    const gy = Math.floor(lat / this.resolution);
+    return `${gx},${gy}`;
+  }
+
+  /**
+   * Insert feature index into all grid cells its bbox covers
+   */
+  insert(featureIdx: number, bbox: { w: number; s: number; e: number; n: number }): void {
+    const gxMin = Math.floor(bbox.w / this.resolution);
+    const gxMax = Math.floor(bbox.e / this.resolution);
+    const gyMin = Math.floor(bbox.s / this.resolution);
+    const gyMax = Math.floor(bbox.n / this.resolution);
+
+    for (let gx = gxMin; gx <= gxMax; gx++) {
+      for (let gy = gyMin; gy <= gyMax; gy++) {
+        const k = `${gx},${gy}`;
+        let cell = this.grid.get(k);
+        if (!cell) {
+          cell = { featureIndices: [] };
+          this.grid.set(k, cell);
+        }
+        cell.featureIndices.push(featureIdx);
+      }
+    }
+  }
+
+  /**
+   * Get candidate feature indices for a point — O(1)
+   */
+  query(lng: number, lat: number): number[] {
+    const k = this.key(lng, lat);
+    return this.grid.get(k)?.featureIndices ?? [];
+  }
+}
 
 // ═══════════════════════════════════════
-// CITY GEO INDEX (per-city instance)
+// CITY INDEX (main class)
 // ═══════════════════════════════════════
 
-class CityGeoIndex {
+class CityIndex {
   readonly city: string;
   readonly state: string;
-  readonly totalAreas: number;
-  private indexed: IndexedFeature[];
+  readonly totalFeatures: number;
+
+  private features: IndexedFeature[];
+  private grid: SpatialGrid;
+  private loaded = false;
 
   constructor(data: GeoCollection) {
     this.city = data.city;
     this.state = data.state;
-    this.totalAreas = data.features.length;
+    this.totalFeatures = data.features.length;
 
-    // Pre-compute bbox + center for each feature
-    this.indexed = data.features.map((f) => {
+    // Pre-index all features
+    this.features = data.features.map((f) => {
       const ring = f.geometry.coordinates[0];
       return {
         feature: f,
-        center: computeCenter(ring),
+        centroid: computeCentroid(ring),
         bbox: computeBBox(ring),
+        ring,
       };
     });
+
+    // Build spatial grid
+    this.grid = new SpatialGrid(GRID_RESOLUTION);
+    for (let i = 0; i < this.features.length; i++) {
+      this.grid.insert(i, this.features[i].bbox);
+    }
+
+    this.loaded = true;
   }
 
   /**
-   * Detect area from GPS coordinates using Point-in-Polygon
-   * Returns the matched area or nearest area
+   * DETECT: Main Point-in-Polygon detection
+   * 
+   * @returns DetectionResult with area, zone, confidence, performance metric
    */
-  detect(lat: number, lng: number): DetectedArea {
-    const point: [number, number] = [lng, lat];
+  detect(lat: number, lng: number): DetectionResult {
+    const t0 = performance.now();
 
-    let exact: DetectedArea | null = null;
-    let nearest: DetectedArea | null = null;
-    let nearestDist = Infinity;
+    if (!this.loaded || this.features.length === 0) {
+      return this.outsideResult(lng, lat, performance.now() - t0);
+    }
 
-    for (const { feature, center, bbox } of this.indexed) {
-      const dist = haversine(lng, lat, center[0], center[1]);
+    // ── STEP 1: Spatial grid lookup (O(1)) ──
+    const candidates = this.grid.query(lng, lat);
 
-      // Fast bbox rejection → then PIP test
-      if (inBBox(point, bbox)) {
-        const ring = feature.geometry.coordinates[0];
-        if (pointInPolygon(point, ring)) {
-          exact = {
-            id: feature.id,
-            name: feature.properties.name,
-            zone: feature.properties.zone,
-            pincode: feature.properties.pincode,
-            center,
-            distance: Math.round(dist * 100) / 100,
+    // ── STEP 2: Point-in-Polygon on candidates ──
+    for (const idx of candidates) {
+      const f = this.features[idx];
+      // Fast bbox check
+      if (lng >= f.bbox.w && lng <= f.bbox.e && lat >= f.bbox.s && lat <= f.bbox.n) {
+        // Exact PIP test
+        if (pointInPolygon(lng, lat, f.ring)) {
+          const dist = haversine(lng, lat, f.centroid[0], f.centroid[1]);
+          return {
+            found: true,
+            area: f.feature.properties.name,
+            zone: f.feature.properties.zone,
+            pincode: f.feature.properties.pincode,
+            featureId: f.feature.id,
             confidence: 'exact',
+            distanceFromCenter: Math.round(dist * 100) / 100,
+            centroid: f.centroid,
+            lookupMs: Math.round((performance.now() - t0) * 100) / 100,
           };
-          break;
         }
-      }
-
-      // Track nearest
-      if (dist < nearestDist) {
-        nearestDist = dist;
-        nearest = {
-          id: feature.id,
-          name: feature.properties.name,
-          zone: feature.properties.zone,
-          pincode: feature.properties.pincode,
-          center,
-          distance: Math.round(dist * 100) / 100,
-          confidence: dist < 2 ? 'near' : 'approximate',
-        };
       }
     }
 
-    if (exact) return exact;
-    if (nearest && nearestDist < 5) return nearest;
+    // ── STEP 3: No polygon match → find nearest centroid ──
+    let nearestIdx = -1;
+    let nearestDist = Infinity;
 
-    // Fallback: first feature or generic
-    const first = this.indexed[0];
+    for (let i = 0; i < this.features.length; i++) {
+      const f = this.features[i];
+      const dist = haversine(lng, lat, f.centroid[0], f.centroid[1]);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestIdx = i;
+      }
+    }
+
+    const elapsed = Math.round((performance.now() - t0) * 100) / 100;
+
+    // ── STEP 4: Distance check ──
+    if (nearestIdx >= 0 && nearestDist < MAX_DISTANCE_KM) {
+      const f = this.features[nearestIdx];
+      return {
+        found: true,
+        area: f.feature.properties.name,
+        zone: f.feature.properties.zone,
+        pincode: f.feature.properties.pincode,
+        featureId: f.feature.id,
+        confidence: 'nearest',
+        distanceFromCenter: Math.round(nearestDist * 100) / 100,
+        centroid: f.centroid,
+        lookupMs: elapsed,
+      };
+    }
+
+    // ── STEP 5: Outside coverage ──
+    return this.outsideResult(lng, lat, elapsed);
+  }
+
+  /**
+   * NEARBY: Get all areas within radius
+   */
+  nearby(lat: number, lng: number, radiusKm = 5): NearbyResult {
+    const t0 = performance.now();
+    const results: NearbyResult['areas'] = [];
+
+    for (const f of this.features) {
+      const dist = haversine(lng, lat, f.centroid[0], f.centroid[1]);
+      if (dist <= radiusKm) {
+        results.push({
+          area: f.feature.properties.name,
+          zone: f.feature.properties.zone,
+          pincode: f.feature.properties.pincode,
+          distance: Math.round(dist * 100) / 100,
+        });
+      }
+    }
+
+    results.sort((a, b) => a.distance - b.distance);
     return {
-      id: 'unknown',
-      name: this.city,
-      zone: this.city,
-      pincode: '',
-      center: first?.center ?? [75.78, 26.91],
-      distance: 0,
-      confidence: 'approximate',
+      areas: results,
+      lookupMs: Math.round((performance.now() - t0) * 100) / 100,
     };
   }
 
   /**
-   * Get all areas within radius (km) of a point
-   */
-  nearby(lat: number, lng: number, radiusKm = 5): DetectedArea[] {
-    const results: DetectedArea[] = [];
-    for (const { feature, center } of this.indexed) {
-      const dist = haversine(lng, lat, center[0], center[1]);
-      if (dist <= radiusKm) {
-        results.push({
-          id: feature.id,
-          name: feature.properties.name,
-          zone: feature.properties.zone,
-          pincode: feature.properties.pincode,
-          center,
-          distance: Math.round(dist * 100) / 100,
-          confidence: dist < 1 ? 'exact' : dist < 3 ? 'near' : 'approximate',
-        });
-      }
-    }
-    return results.sort((a, b) => a.distance - b.distance);
-  }
-
-  /**
-   * Get all unique zones in this city
+   * Get all zones
    */
   zones(): string[] {
     const set = new Set<string>();
-    for (const { feature } of this.indexed) {
-      set.add(feature.properties.zone);
-    }
+    for (const f of this.features) set.add(f.feature.properties.zone);
     return Array.from(set);
-  }
-
-  /**
-   * Find feature by name (case-insensitive)
-   */
-  findByName(name: string): GeoFeature | undefined {
-    const lower = name.toLowerCase();
-    return this.indexed.find((i) => i.feature.properties.name.toLowerCase() === lower)?.feature;
   }
 
   /**
    * Get all area names
    */
   allNames(): string[] {
-    return this.indexed.map((i) => i.feature.properties.name);
+    return this.features.map((f) => f.feature.properties.name);
+  }
+
+  /**
+   * Find by name
+   */
+  findByName(name: string): GeoFeature | undefined {
+    const lower = name.toLowerCase();
+    return this.features.find((f) => f.feature.properties.name.toLowerCase() === lower)?.feature;
+  }
+
+  /**
+   * "Outside Jaipur Coverage" result
+   */
+  private outsideResult(lng: number, lat: number, ms: number): DetectionResult {
+    return {
+      found: false,
+      area: 'Outside Jaipur Coverage',
+      zone: 'N/A',
+      pincode: '',
+      featureId: '',
+      confidence: 'outside',
+      distanceFromCenter: 0,
+      centroid: [lng, lat],
+      lookupMs: Math.round(ms * 100) / 100,
+    };
   }
 }
 
 // ═══════════════════════════════════════
-// PUBLIC API
+// CITY CACHE + PUBLIC API
 // ═══════════════════════════════════════
+
+const cache = new Map<string, CityIndex>();
 
 const GeoService = {
   /**
-   * Load a city's GeoJSON and return an index.
-   * Cached — second call is instant.
+   * Load a city GeoJSON → build spatial index → cache
    * 
-   * @param citySlug  lowercase city name, e.g. "jaipur", "delhi"
-   *                  loads from /geo/{citySlug}.geojson
+   * @param citySlug  e.g. "jaipur" loads /geo/jaipur.geojson
+   * 
+   * To add a new city:
+   *   1. Create public/geo/{city}.geojson
+   *   2. Call GeoService.loadCity('{city}')
+   *   Done!
    */
-  async loadCity(citySlug: string): Promise<CityGeoIndex> {
-    const key = citySlug.toLowerCase();
-
-    if (cityCache.has(key)) {
-      return cityCache.get(key)!;
-    }
+  async loadCity(citySlug: string): Promise<CityIndex> {
+    const key = citySlug.toLowerCase().trim();
+    if (cache.has(key)) return cache.get(key)!;
 
     const url = `/geo/${key}.geojson`;
     const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`GeoJSON not found for city "${key}" at ${url}`);
-    }
+    if (!res.ok) throw new Error(`GeoJSON not found: ${url}`);
 
     const data: GeoCollection = await res.json();
+    if (!data.features?.length) throw new Error(`Empty GeoJSON: ${key}`);
 
-    if (!data.features?.length) {
-      throw new Error(`GeoJSON for "${key}" has no features`);
-    }
+    const index = new CityIndex(data);
+    cache.set(key, index);
 
-    const index = new CityGeoIndex(data);
-    cityCache.set(key, index);
+    console.log(
+      `[GeoService] Loaded "${key}" — ${index.totalFeatures} areas, ` +
+      `${index.zones().length} zones`
+    );
+
     return index;
   },
 
   /**
-   * Check if a city GeoJSON is already cached
+   * Check if loaded
    */
   isLoaded(citySlug: string): boolean {
-    return cityCache.has(citySlug.toLowerCase());
+    return cache.has(citySlug.toLowerCase().trim());
   },
 
   /**
-   * Get a cached city index (returns null if not loaded)
+   * Get cached index (null if not loaded)
    */
-  getLoaded(citySlug: string): CityGeoIndex | null {
-    return cityCache.get(citySlug.toLowerCase()) ?? null;
+  get(citySlug: string): CityIndex | null {
+    return cache.get(citySlug.toLowerCase().trim()) ?? null;
   },
 
   /**
-   * Clear cache (for testing or refresh)
+   * Clear all cached cities
    */
   clearCache(): void {
-    cityCache.clear();
+    cache.clear();
   },
 
   /**
-   * List all loaded cities
+   * List loaded city slugs
    */
   loadedCities(): string[] {
-    return Array.from(cityCache.keys());
+    return Array.from(cache.keys());
   },
 };
 
 export default GeoService;
-export { CityGeoIndex };
+export { CityIndex };

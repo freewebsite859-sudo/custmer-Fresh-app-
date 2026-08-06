@@ -1,16 +1,23 @@
 /**
  * LIVE GEOLOCATION UTILITY
  * 
- * GPS → Google API fallback → Dynamic GeoJSON area detection
+ * GPS → Google API fallback → Point-in-Polygon area detection
  * 
- * No hardcoded locality names!
- * Area detection loads from /geo/{city}.geojson dynamically.
- * Add new cities by placing a .geojson file in public/geo/
+ * Detection flow:
+ *   1. Browser GPS (primary)
+ *   2. Google Geolocation API (fallback)
+ *   3. Spatial grid → PIP → nearest centroid → "Outside Jaipur Coverage"
+ * 
+ * Add new cities by placing /geo/{city}.geojson — zero code changes!
  */
 
-import GeoService, { DetectedArea, CityGeoIndex } from '../services/geoService';
+import GeoService, { DetectionResult, CityIndex } from '../services/geoService';
 
 const GOOGLE_GEOLOCATION_API_KEY = import.meta.env.VITE_GOOGLE_GEOLOCATION_API_KEY || 'AIzaSyA-Gcqz5-iQbqm0vPfk98ONrtAENUX3dTk';
+
+// ═══════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════
 
 export interface GeoPosition {
   lat: number;
@@ -20,13 +27,17 @@ export interface GeoPosition {
 }
 
 export interface LiveLocationResult extends GeoPosition {
-  address: string;
-  city: string;
+  found: boolean;
   area: string;
   zone: string;
   pincode: string;
-  confidence: string;
-  nearbyAreas: DetectedArea[];
+  featureId: string;
+  confidence: 'exact' | 'nearest' | 'outside';
+  distanceFromCenter: number;
+  address: string;
+  city: string;
+  nearbyAreas: Array<{ area: string; zone: string; pincode: string; distance: number }>;
+  lookupMs: number;
 }
 
 // ═══════════════════════════════════════
@@ -44,7 +55,12 @@ export function getBrowserPosition(timeout = 20000): Promise<GeoPosition> {
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, timestamp: pos.timestamp }),
+      (pos) => resolve({
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: pos.coords.accuracy,
+        timestamp: pos.timestamp,
+      }),
       (err) => {
         switch (err.code) {
           case 1: reject(new Error('Location permission denied. Please enable location in browser settings.')); break;
@@ -77,15 +93,20 @@ export function watchPosition(
 
 export async function getGoogleGeoPosition(): Promise<GeoPosition> {
   const res = await fetch(`https://www.googleapis.com/geolocation/v1/geolocate?key=${GOOGLE_GEOLOCATION_API_KEY}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ considerIp: true }),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ considerIp: true }),
   });
-  if (!res.ok) { const e = await res.json().catch(() => null); throw new Error(e?.error?.message || `Geo API error ${res.status}`); }
+  if (!res.ok) {
+    const e = await res.json().catch(() => null);
+    throw new Error(e?.error?.message || `Geo API error ${res.status}`);
+  }
   const d = await res.json();
   return { lat: d.location.lat, lng: d.location.lng, accuracy: d.accuracy, timestamp: Date.now() };
 }
 
 // ═══════════════════════════════════════
-// REVERSE GEOCODING (optional, for full address)
+// REVERSE GEOCODING (optional)
 // ═══════════════════════════════════════
 
 export async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
@@ -114,13 +135,18 @@ export function calculateDistance(lat1: number, lng1: number, lat2: number, lng2
 // ═══════════════════════════════════════
 
 /**
- * Get live location with automatic GPS → API → GeoJSON detection.
+ * Get live location with Point-in-Polygon detection.
+ * 
+ * Detection rules:
+ *   1. Point inside polygon  → return that locality (confidence: "exact")
+ *   2. No polygon match      → find nearest centroid
+ *   3. Distance < 5km        → return nearest locality (confidence: "nearest")
+ *   4. Distance >= 5km       → "Outside Jaipur Coverage" (confidence: "outside")
  * 
  * @param citySlug  city to load GeoJSON for (default "jaipur")
- *                  to support a new city, just add /geo/{citySlug}.geojson
  */
 export async function getLiveLocation(citySlug = 'jaipur'): Promise<LiveLocationResult> {
-  // 1. Get GPS coordinates
+  // ── Step 1: Get GPS coordinates ──
   let pos: GeoPosition;
   try {
     pos = await getBrowserPosition();
@@ -133,29 +159,40 @@ export async function getLiveLocation(citySlug = 'jaipur'): Promise<LiveLocation
     }
   }
 
-  // 2. Load city GeoJSON (cached after first load)
-  const geo: CityGeoIndex = await GeoService.loadCity(citySlug);
+  // ── Step 2: Load city GeoJSON (cached after first load) ──
+  const geo: CityIndex = await GeoService.loadCity(citySlug);
 
-  // 3. Point-in-Polygon detection (offline!)
-  const detected = geo.detect(pos.lat, pos.lng);
-  const nearby = geo.nearby(pos.lat, pos.lng, 5);
+  // ── Step 3: Point-in-Polygon detection ──
+  const detection: DetectionResult = geo.detect(pos.lat, pos.lng);
 
-  // 4. Optional reverse geocoding for full address
+  // ── Step 4: Get nearby areas ──
+  const nearbyResult = geo.nearby(pos.lat, pos.lng, 5);
+
+  // ── Step 5: Optional reverse geocoding ──
   let address = '';
   try { address = (await reverseGeocode(pos.lat, pos.lng)) || ''; } catch {}
 
   if (!address) {
-    address = `${detected.name}, ${geo.city}, Rajasthan (${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)})`;
+    if (detection.found) {
+      address = `${detection.area}, ${geo.city}, Rajasthan`;
+    } else {
+      address = `(${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)})`;
+    }
   }
 
+  // ── Step 6: Build result ──
   return {
     ...pos,
+    found: detection.found,
+    area: detection.area,
+    zone: detection.zone,
+    pincode: detection.pincode,
+    featureId: detection.featureId,
+    confidence: detection.confidence,
+    distanceFromCenter: detection.distanceFromCenter,
     address,
     city: geo.city,
-    area: detected.name,
-    zone: detected.zone,
-    pincode: detected.pincode,
-    confidence: detected.confidence,
-    nearbyAreas: nearby,
+    nearbyAreas: nearbyResult.areas,
+    lookupMs: detection.lookupMs,
   };
 }

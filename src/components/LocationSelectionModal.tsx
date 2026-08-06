@@ -32,7 +32,7 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
   const [hasInteracted, setHasInteracted] = useState<boolean>(false);
   const [locationError, setLocationError] = useState<string>('');
   const [liveCoords, setLiveCoords] = useState<{lat: number; lng: number; accuracy: number} | null>(null);
-  const [detectedInfo, setDetectedInfo] = useState<{area: string; zone: string; pincode: string; confidence: string} | null>(null);
+  const [detectedInfo, setDetectedInfo] = useState<{area: string; zone: string; pincode: string; confidence: string; found: boolean; lookupMs: number} | null>(null);
 
   const zoneRef = useRef<HTMLDivElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
@@ -82,6 +82,8 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
         zone: position.zone,
         pincode: position.pincode,
         confidence: position.confidence,
+        found: position.found,
+        lookupMs: position.lookupMs,
       });
 
       onSelectLocation(gpsLocation);
@@ -180,17 +182,32 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
 
               {/* Live Location Info */}
               {liveCoords && (
-                <div className="w-full mt-3 p-3 bg-green-50 border border-green-200 rounded-xl">
+                <div className={`w-full mt-3 p-3 rounded-xl border ${
+                  detectedInfo?.found === false
+                    ? 'bg-amber-50 border-amber-200'
+                    : 'bg-green-50 border-green-200'
+                }`}>
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                    <span className="text-[13px] font-bold text-green-700">
+                    <span className={`w-2 h-2 rounded-full animate-pulse ${
+                      detectedInfo?.found === false ? 'bg-amber-500' : 'bg-green-500'
+                    }`} />
+                    <span className={`text-[13px] font-bold ${
+                      detectedInfo?.found === false ? 'text-amber-700' : 'text-green-700'
+                    }`}>
+                      {detectedInfo?.found === false ? '⚠️ ' : '📍 '}
                       {detectedInfo?.area || 'Location Detected'}
                     </span>
-                    <span className="text-[10px] px-1.5 py-0.5 bg-green-200 text-green-800 rounded-full font-bold uppercase">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
+                      detectedInfo?.confidence === 'exact'
+                        ? 'bg-green-200 text-green-800'
+                        : detectedInfo?.confidence === 'nearest'
+                          ? 'bg-yellow-200 text-yellow-800'
+                          : 'bg-red-200 text-red-800'
+                    }`}>
                       {detectedInfo?.confidence || 'detected'}
                     </span>
                   </div>
-                  {detectedInfo && (
+                  {detectedInfo && detectedInfo.found && (
                     <div className="flex flex-wrap gap-2 mb-2">
                       <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-medium">
                         📍 Zone: {detectedInfo.zone}
@@ -202,8 +219,13 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
                       )}
                     </div>
                   )}
-                  <p className="text-[10px] text-green-600">
-                    🎯 GPS: {liveCoords.lat.toFixed(6)}, {liveCoords.lng.toFixed(6)} • ±{Math.round(liveCoords.accuracy)}m
+                  {detectedInfo?.found === false && (
+                    <p className="text-[11px] text-amber-600 mb-1">
+                      Your location is outside Jaipur coverage area. Please select manually.
+                    </p>
+                  )}
+                  <p className="text-[10px] text-gray-500">
+                    🎯 GPS: {liveCoords.lat.toFixed(6)}, {liveCoords.lng.toFixed(6)} • ±{Math.round(liveCoords.accuracy)}m • {detectedInfo?.lookupMs?.toFixed(1)}ms
                   </p>
                 </div>
               )}
@@ -436,19 +458,36 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
                   </>
                 )}
               </button>
-              {liveCoords && detectedInfo && (
+              {liveCoords && detectedInfo && detectedInfo.found && (
                 <div className="mt-2 flex flex-col items-center gap-1">
                   <div className="flex items-center gap-1">
                     <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
                     <span className="text-[11px] text-green-700 font-bold">
                       📍 {detectedInfo.area}
                     </span>
-                    <span className="text-[9px] px-1 py-0.5 bg-green-200 text-green-800 rounded-full font-bold">
+                    <span className={`text-[9px] px-1 py-0.5 rounded-full font-bold ${
+                      detectedInfo.confidence === 'exact'
+                        ? 'bg-green-200 text-green-800'
+                        : 'bg-yellow-200 text-yellow-800'
+                    }`}>
                       {detectedInfo.confidence}
                     </span>
                   </div>
                   <span className="text-[10px] text-green-600">
-                    Zone: {detectedInfo.zone} • PIN: {detectedInfo.pincode} • ±{Math.round(liveCoords.accuracy)}m
+                    Zone: {detectedInfo.zone} • PIN: {detectedInfo.pincode} • ±{Math.round(liveCoords.accuracy)}m • {detectedInfo.lookupMs?.toFixed(1)}ms
+                  </span>
+                </div>
+              )}
+              {liveCoords && detectedInfo && !detectedInfo.found && (
+                <div className="mt-2 flex flex-col items-center gap-1">
+                  <div className="flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full" />
+                    <span className="text-[11px] text-amber-700 font-bold">
+                      ⚠️ Outside Jaipur Coverage
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-amber-600">
+                    Please select your location manually
                   </span>
                 </div>
               )}
