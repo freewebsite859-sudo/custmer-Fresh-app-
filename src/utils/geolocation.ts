@@ -2,6 +2,7 @@
  * Live Geolocation Utility
  * Uses Browser Geolocation API (primary) + Google Geolocation API (fallback)
  * for real-time user location tracking.
+ * Includes local Jaipur area detection from coordinates.
  */
 
 const GOOGLE_GEOLOCATION_API_KEY = import.meta.env.VITE_GOOGLE_GEOLOCATION_API_KEY || 'AIzaSyA-Gcqz5-iQbqm0vPfk98ONrtAENUX3dTk';
@@ -16,18 +17,93 @@ export interface GeoPosition {
   timestamp: number;
 }
 
+/* ──────────────────────────────────────────────
+ * LOCAL JAIPUR AREA DETECTION (no API needed)
+ * Maps approximate coordinate ranges to known areas
+ * ────────────────────────────────────────────── */
+interface AreaBounds {
+  name: string;
+  latMin: number;
+  latMax: number;
+  lngMin: number;
+  lngMax: number;
+}
+
+const JAIPUR_AREAS: AreaBounds[] = [
+  // Central Jaipur
+  { name: 'Pink City / Johari Bazaar', latMin: 26.910, latMax: 26.930, lngMin: 75.815, lngMax: 75.835 },
+  { name: 'MI Road', latMin: 26.905, latMax: 26.920, lngMin: 75.790, lngMax: 75.810 },
+  { name: 'C-Scheme', latMin: 26.895, latMax: 26.915, lngMin: 75.785, lngMax: 75.810 },
+  { name: 'Hawa Mahal Area', latMin: 26.920, latMax: 26.930, lngMin: 75.820, lngMax: 75.835 },
+
+  // South Jaipur
+  { name: 'Mansarovar', latMin: 26.845, latMax: 26.880, lngMin: 75.755, lngMax: 75.785 },
+  { name: 'Malviya Nagar', latMin: 26.845, latMax: 26.875, lngMin: 75.785, lngMax: 75.820 },
+  { name: 'Jagatpura', latMin: 26.810, latMax: 26.850, lngMin: 75.810, lngMax: 75.870 },
+  { name: 'Sanganer', latMin: 26.800, latMax: 26.840, lngMin: 75.760, lngMax: 75.800 },
+  { name: 'Pratap Nagar', latMin: 26.810, latMax: 26.845, lngMin: 75.770, lngMax: 75.810 },
+  { name: 'Tonk Road', latMin: 26.850, latMax: 26.900, lngMin: 75.780, lngMax: 75.800 },
+  { name: 'Durgapura', latMin: 26.840, latMax: 26.860, lngMin: 75.760, lngMax: 75.785 },
+  { name: 'Jawahar Nagar', latMin: 26.860, latMax: 26.880, lngMin: 75.790, lngMax: 75.815 },
+
+  // West Jaipur
+  { name: 'Vaishali Nagar', latMin: 26.900, latMax: 26.930, lngMin: 75.720, lngMax: 75.755 },
+  { name: 'Ajmer Road', latMin: 26.880, latMax: 26.920, lngMin: 75.710, lngMax: 75.745 },
+  { name: 'Jhotwara', latMin: 26.920, latMax: 26.955, lngMin: 75.720, lngMax: 75.760 },
+  { name: 'Nirman Nagar', latMin: 26.895, latMax: 26.915, lngMin: 75.740, lngMax: 75.765 },
+
+  // North Jaipur
+  { name: 'Raja Park', latMin: 26.890, latMax: 26.910, lngMin: 75.805, lngMax: 75.830 },
+  { name: 'Adarsh Nagar', latMin: 26.900, latMax: 26.920, lngMin: 75.780, lngMax: 75.800 },
+  { name: 'Civil Lines', latMin: 26.900, latMax: 26.920, lngMin: 75.780, lngMax: 75.810 },
+  { name: 'Bani Park', latMin: 26.920, latMax: 26.945, lngMin: 75.775, lngMax: 75.800 },
+  { name: 'Sindhi Camp', latMin: 26.915, latMax: 26.930, lngMin: 75.780, lngMax: 75.800 },
+
+  // East Jaipur
+  { name: 'Sitapura', latMin: 26.780, latMax: 26.820, lngMin: 75.810, lngMax: 75.870 },
+  { name: 'Vidyadhar Nagar', latMin: 26.930, latMax: 26.960, lngMin: 75.760, lngMax: 75.800 },
+
+  // Extended areas
+  { name: 'Shyam Nagar', latMin: 26.895, latMax: 26.915, lngMin: 75.760, lngMax: 75.785 },
+  { name: 'Gopalpura', latMin: 26.865, latMax: 26.885, lngMin: 75.760, lngMax: 75.790 },
+  { name: 'Mansarovar Extension', latMin: 26.830, latMax: 26.855, lngMin: 75.740, lngMax: 75.770 },
+  { name: 'Shipra Path', latMin: 26.855, latMax: 26.875, lngMin: 75.770, lngMax: 75.795 },
+  { name: 'New Sanganer Road', latMin: 26.855, latMax: 26.880, lngMin: 75.755, lngMax: 75.775 },
+];
+
 /**
- * Check if browser geolocation is available
+ * Detect Jaipur area from GPS coordinates (local, no API needed)
  */
+function detectJaipurArea(lat: number, lng: number): string {
+  for (const area of JAIPUR_AREAS) {
+    if (lat >= area.latMin && lat <= area.latMax && lng >= area.lngMin && lng <= area.lngMax) {
+      return area.name;
+    }
+  }
+  // If no exact match, find closest area
+  let closestArea = 'Jaipur';
+  let minDist = Infinity;
+  for (const area of JAIPUR_AREAS) {
+    const centerLat = (area.latMin + area.latMax) / 2;
+    const centerLng = (area.lngMin + area.lngMax) / 2;
+    const dist = Math.sqrt((lat - centerLat) ** 2 + (lng - centerLng) ** 2);
+    if (dist < minDist) {
+      minDist = dist;
+      closestArea = area.name;
+    }
+  }
+  // Only return closest if reasonably near (within ~5km)
+  return minDist < 0.05 ? `Near ${closestArea}` : 'Jaipur';
+}
+
+/* ──────────────────────────────────────────────
+ * BROWSER GEOLOCATION
+ * ────────────────────────────────────────────── */
 export function isGeolocationAvailable(): boolean {
   return 'geolocation' in navigator;
 }
 
-/**
- * Get current position using Browser Geolocation API (GPS/Wi-Fi/Cell)
- * This is the PRIMARY method - uses device GPS for accurate location
- */
-export function getBrowserPosition(timeout = 15000): Promise<GeoPosition> {
+export function getBrowserPosition(timeout = 20000): Promise<GeoPosition> {
   return new Promise((resolve, reject) => {
     if (!isGeolocationAvailable()) {
       reject(new Error('Geolocation is not supported by this browser'));
@@ -61,15 +137,14 @@ export function getBrowserPosition(timeout = 15000): Promise<GeoPosition> {
       {
         enableHighAccuracy: true,
         timeout,
-        maximumAge: 30000, // Accept cached position up to 30 seconds old
+        maximumAge: 60000, // Accept cached position up to 60 seconds old
       }
     );
   });
 }
 
 /**
- * Watch position for real-time tracking (live movement)
- * Returns a cleanup function to stop watching
+ * Watch position for real-time tracking
  */
 export function watchPosition(
   onUpdate: (pos: GeoPosition) => void,
@@ -107,8 +182,8 @@ export function watchPosition(
     },
     {
       enableHighAccuracy: options?.highAccuracy ?? true,
-      timeout: 15000,
-      maximumAge: 10000,
+      timeout: 20000,
+      maximumAge: 15000,
     }
   );
 
@@ -117,10 +192,9 @@ export function watchPosition(
   };
 }
 
-/**
- * Fallback: Get approximate location using Google Geolocation API
- * Uses cell towers and Wi-Fi nodes when GPS is unavailable
- */
+/* ──────────────────────────────────────────────
+ * GOOGLE GEOLOCATION API FALLBACK
+ * ────────────────────────────────────────────── */
 export async function getGoogleGeoPosition(): Promise<GeoPosition> {
   const response = await fetch(
     `https://www.googleapis.com/geolocation/v1/geolocate?key=${GOOGLE_GEOLOCATION_API_KEY}`,
@@ -147,9 +221,9 @@ export async function getGoogleGeoPosition(): Promise<GeoPosition> {
   };
 }
 
-/**
- * Reverse geocode lat/lng to human-readable address using Google Maps Geocoding API
- */
+/* ──────────────────────────────────────────────
+ * REVERSE GEOCODING (Google Maps API)
+ * ────────────────────────────────────────────── */
 export async function reverseGeocode(lat: number, lng: number): Promise<{
   address: string;
   city: string;
@@ -175,19 +249,22 @@ export async function reverseGeocode(lat: number, lng: number): Promise<{
     );
     const city = cityComponent?.long_name || 'Jaipur';
 
-    // Extract area/neighborhood
+    // Extract area/neighborhood - try multiple levels
     const areaComponent = components.find((c: any) =>
       c.types.includes('sublocality_level_1') ||
       c.types.includes('sublocality') ||
-      c.types.includes('neighborhood') ||
+      c.types.includes('neighborhood')
+    );
+    const routeComponent = components.find((c: any) =>
       c.types.includes('route')
     );
-    const area = areaComponent?.long_name || '';
+    const area = areaComponent?.long_name || routeComponent?.long_name || '';
 
     // Extract postal code
     const postalComponent = components.find((c: any) =>
       c.types.includes('postal_code')
     );
+    const pincode = postalComponent?.long_name || '';
 
     return {
       address: result.formatted_address,
@@ -201,14 +278,14 @@ export async function reverseGeocode(lat: number, lng: number): Promise<{
   }
 }
 
-/**
- * Calculate distance between two coordinates using Haversine formula (in km)
- */
+/* ──────────────────────────────────────────────
+ * DISTANCE CALCULATION (Haversine formula)
+ * ────────────────────────────────────────────── */
 export function calculateDistance(
   lat1: number, lng1: number,
   lat2: number, lng2: number
 ): number {
-  const R = 6371; // Earth's radius in km
+  const R = 6371;
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
   const a =
@@ -216,19 +293,19 @@ export function calculateDistance(
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
     Math.sin(dLng / 2) * Math.sin(dLng / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return Math.round(R * c * 10) / 10; // Round to 1 decimal
+  return Math.round(R * c * 10) / 10;
 }
 
 function toRad(deg: number): number {
   return deg * (Math.PI / 180);
 }
 
-/**
- * Main function: Get live location with automatic fallback
- * 1. Try Browser GPS (most accurate)
- * 2. Fallback to Google Geolocation API (cell tower/Wi-Fi)
- * 3. Returns position with reverse-geocoded address
- */
+/* ──────────────────────────────────────────────
+ * MAIN: Get live location with all fallbacks
+ * 1. Browser GPS (most accurate)
+ * 2. Google Geolocation API (cell tower/Wi-Fi)
+ * 3. Reverse geocode OR local area detection
+ * ────────────────────────────────────────────── */
 export async function getLiveLocation(): Promise<GeoPosition & { address?: string; city?: string; area?: string }> {
   let position: GeoPosition;
 
@@ -246,13 +323,36 @@ export async function getLiveLocation(): Promise<GeoPosition & { address?: strin
     }
   }
 
-  // Reverse geocode to get address
-  const geoResult = await reverseGeocode(position.lat, position.lng);
+  // Try reverse geocoding first
+  let area = '';
+  let city = 'Jaipur';
+  let address = '';
+
+  try {
+    const geoResult = await reverseGeocode(position.lat, position.lng);
+    if (geoResult) {
+      area = geoResult.area;
+      city = geoResult.city;
+      address = geoResult.formattedAddress;
+    }
+  } catch (e) {
+    console.warn('Reverse geocoding failed, using local detection');
+  }
+
+  // If reverse geocoding failed or returned generic result, use local detection
+  if (!area || area === city || area.length < 3) {
+    area = detectJaipurArea(position.lat, position.lng);
+  }
+
+  // Format address if not available
+  if (!address) {
+    address = `${area}, ${city} (${position.lat.toFixed(4)}, ${position.lng.toFixed(4)})`;
+  }
 
   return {
     ...position,
-    address: geoResult?.formattedAddress || `${position.lat.toFixed(4)}, ${position.lng.toFixed(4)}`,
-    city: geoResult?.city || 'Jaipur',
-    area: geoResult?.area || 'Unknown Area',
+    address,
+    city,
+    area,
   };
 }
