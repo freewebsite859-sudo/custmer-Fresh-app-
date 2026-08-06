@@ -3,10 +3,12 @@
 // No new DB objects. Maps DB rows onto the existing UI `Salon` type.
 // Fields with no real source yet (rating/review counts/distance) are returned
 // as 0 + isNew=true so the UI can show a "New" tag and hide fake badges (D2-approved).
+// Coordinates are resolved from GeoJSON area centroids when available.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { Salon, Service, Staff } from '../types';
 import { BANNER_URL } from '../data/mockData';
+import GeoService from '../services/geoService';
 
 const FETCH_LIMIT = 50;
 
@@ -144,7 +146,7 @@ export async function fetchPublicSalons(client: SupabaseClient): Promise<Salon[]
   // (owner approved + published = live). Drafts are never shown.
   const publishedSiteIds = new Set(siteBySalon.keys());
 
-  return ((salonsRes.data || []) as SalonRow[])
+  const mappedSalons = ((salonsRes.data || []) as SalonRow[])
     .filter((row) => publishedSiteIds.has(row.id))
     .map((row) => {
     const cfg = siteBySalon.get(row.id) || {};
@@ -197,4 +199,30 @@ export async function fetchPublicSalons(client: SupabaseClient): Promise<Salon[]
       staff,
     } satisfies Salon;
   });
+
+  // Resolve coordinates from GeoJSON area centroids (no API)
+  try {
+    const citySlugs = new Set(mappedSalons.map(s => (s.city || 'jaipur').toLowerCase().trim()));
+    for (const slug of citySlugs) {
+      try { await GeoService.loadCity(slug); } catch {}
+    }
+    for (const salon of mappedSalons) {
+      if (salon.lat && salon.lng) continue;
+      const citySlug = (salon.city || 'jaipur').toLowerCase().trim();
+      const geo = GeoService.get(citySlug);
+      if (!geo) continue;
+      const feature = geo.findByName(salon.area);
+      if (feature) {
+        const ring = feature.geometry.coordinates[0];
+        let sumLng = 0, sumLat = 0;
+        for (const [lng, lat] of ring) { sumLng += lng; sumLat += lat; }
+        salon.lng = sumLng / ring.length;
+        salon.lat = sumLat / ring.length;
+      }
+    }
+  } catch {
+    // GeoJSON resolution is best-effort
+  }
+
+  return mappedSalons;
 }

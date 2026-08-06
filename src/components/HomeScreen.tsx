@@ -7,6 +7,7 @@ import { OfflineDashboardCard } from './OfflineDashboardCard';
 import { SmartSearchFilterBar } from './SmartSearchFilterBar';
 import { TopRatedSection } from './TopRatedSection';
 import { NexoraLeaderboardSection } from './NexoraLeaderboardSection';
+import { filterSalons, quickFilter, FilteredSalon, RadiusOption, FilterResult } from '../services/salonFilter';
 
 interface HomeScreenProps {
   location: UserLocation;
@@ -61,6 +62,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const [sortBy, setSortBy] = useState<string>('Default');
   const [filterArea, setFilterArea] = useState<string>('All');
   const [filterAudience, setFilterAudience] = useState<string>('All');
+
+  // GPS-based salon filtering
+  const [gpsRadius, setGpsRadius] = useState<RadiusOption>(10);
+  const [gpsFilterResult, setGpsFilterResult] = useState<FilterResult | null>(null);
+  const [gpsFilteredSalons, setGpsFilteredSalons] = useState<FilteredSalon[]>([]);
   
   const popularAreas = ['All', 'Malviya Nagar', 'Vaishali Nagar', 'C-Scheme', 'Raja Park', 'Mansarovar'];
   const radiusOptions = [2, 5, 10, 15, 20, 25, 30];
@@ -70,6 +76,30 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
+
+  // GPS-based salon filtering (auto-runs when location or salons change)
+  useEffect(() => {
+    if (!location.isGPS || !location.lat || !location.lng || salons.length === 0) {
+      setGpsFilteredSalons([]);
+      setGpsFilterResult(null);
+      return;
+    }
+    let cancelled = false;
+    filterSalons(salons, location.lat, location.lng, location.area, gpsRadius)
+      .then(result => {
+        if (!cancelled) {
+          setGpsFilterResult(result);
+          setGpsFilteredSalons(result.salons);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setGpsFilteredSalons([]);
+          setGpsFilterResult(null);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [location.isGPS, location.lat, location.lng, location.area, salons, gpsRadius]);
   // Scroll container ref for smooth horizontal carousel scrolling
   const carouselRef = React.useRef<HTMLDivElement>(null);
   const recCarouselRef = React.useRef<HTMLDivElement>(null);
@@ -452,6 +482,180 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           onSelectFilter={setSmartFilter}
         />
       </section>
+
+      {/* GPS-Based Nearby Salons Section */}
+      {location.isGPS && location.lat && location.lng && (
+        <section className="flex flex-col gap-3">
+          {/* Radius Selector */}
+          <div className="flex items-center justify-between">
+            <h2 className="text-[15px] font-bold text-[#26181c] flex items-center gap-2">
+              <span className="w-1 h-5 bg-[#e6007e] rounded-full" />
+              Nearby Salons
+              {gpsFilterResult && (
+                <span className="text-[11px] font-medium text-[#8c7077] ml-1">
+                  ({gpsFilterResult.withinRadius} found)
+                </span>
+              )}
+            </h2>
+            <div className="flex items-center gap-1 bg-[#f8eff3] p-1 rounded-xl">
+              {([2, 5, 10] as RadiusOption[]).map(r => (
+                <button
+                  key={r}
+                  onClick={() => setGpsRadius(r)}
+                  className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    gpsRadius === r
+                      ? 'bg-[#e6007e] text-white shadow-sm'
+                      : 'text-[#5a3f47] hover:text-[#e6007e]'
+                  }`}
+                >
+                  {r} km
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* GPS Filter Stats */}
+          {gpsFilterResult && (
+            <div className="flex items-center gap-3 px-3 py-2 bg-[#fff0f2] rounded-xl border border-[#fde7f3]">
+              <div className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                <span className="text-[10px] font-bold text-green-700">
+                  📍 {location.area}
+                </span>
+              </div>
+              <span className="text-[10px] text-[#8c7077]">•</span>
+              <span className="text-[10px] text-[#8c7077]">
+                {gpsFilterResult.inSameArea} in your area
+              </span>
+              <span className="text-[10px] text-[#8c7077]">•</span>
+              <span className="text-[10px] text-[#8c7077]">
+                {gpsFilterResult.withinRadius} within {gpsRadius}km
+              </span>
+            </div>
+          )}
+
+          {/* Loading State */}
+          {gpsFilteredSalons.length === 0 && !gpsFilterResult && salons.length > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 rounded-xl">
+              <span className="material-symbols-outlined animate-spin text-[16px] text-blue-500">progress_activity</span>
+              <span className="text-[12px] text-blue-600 font-medium">Finding salons near you...</span>
+            </div>
+          )}
+
+          {/* GPS-Filtered Salon Cards */}
+          {gpsFilteredSalons.length > 0 && (
+            <div className="flex flex-col gap-4">
+              {gpsFilteredSalons.slice(0, 10).map((salon) => {
+                const isFav = favorites.includes(salon.id);
+                return (
+                  <motion.div
+                    key={salon.id}
+                    layout
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex flex-col bg-white rounded-[20px] shadow-[0_4px_24px_rgba(0,0,0,0.04)] overflow-hidden hover:shadow-[0_8px_32px_rgba(0,0,0,0.08)] transition-shadow duration-300 group"
+                  >
+                    {/* Salon Image */}
+                    <div
+                      className="relative w-full h-[180px] cursor-pointer overflow-hidden"
+                      onClick={() => onSelectSalon(salon)}
+                    >
+                      <img
+                        src={salon.image}
+                        alt={salon.name}
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                      />
+                      {/* Distance Badge */}
+                      <div className="absolute top-3 left-3 flex gap-2">
+                        <div className="bg-[#e6007e]/90 backdrop-blur-sm px-2.5 py-1 rounded-lg flex items-center gap-1 shadow-sm">
+                          <span className="material-symbols-outlined text-[14px] text-white">near_me</span>
+                          <span className="text-[12px] text-white font-bold">
+                            {salon.computedDistanceKm < 1
+                              ? `${Math.round(salon.computedDistanceKm * 1000)}m`
+                              : `${salon.computedDistanceKm.toFixed(1)}km`}
+                          </span>
+                        </div>
+                        {salon.isSameArea && (
+                          <div className="bg-green-500/90 backdrop-blur-sm px-2 py-1 rounded-lg shadow-sm">
+                            <span className="text-[11px] text-white font-bold">📍 Your Area</span>
+                          </div>
+                        )}
+                      </div>
+                      {/* Favorite Toggle */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onToggleFavorite(salon.id); }}
+                        className="absolute top-3 right-3 w-8 h-8 bg-white/90 backdrop-blur-sm rounded-full flex items-center justify-center text-[#8c7077] hover:text-[#e6007e] transition-colors"
+                      >
+                        <span className={`material-symbols-outlined text-[18px] ${isFav ? 'text-[#e6007e] fill-current' : ''}`}>favorite</span>
+                      </button>
+                    </div>
+
+                    {/* Card Content */}
+                    <div className="p-4 flex flex-col gap-2">
+                      <div className="flex justify-between items-start gap-2">
+                        <div>
+                          <h3 className="text-[16px] text-[#26181c] font-semibold line-clamp-1 cursor-pointer hover:text-[#e6007e] transition-colors" onClick={() => onSelectSalon(salon)}>
+                            {salon.name}
+                          </h3>
+                          <p className="text-[13px] text-[#5a3f47] flex items-center gap-1 mt-0.5">
+                            <span className="material-symbols-outlined text-[15px] text-[#e6007e]">location_on</span>
+                            {salon.area}
+                          </p>
+                        </div>
+                        {salon.rating > 0 && (
+                          <div className="flex items-center gap-1 bg-[#ffe8ed] py-1 px-2 rounded-lg shrink-0">
+                            <span className="material-symbols-outlined text-[14px] text-amber-500">star</span>
+                            <span className="text-[12px] text-[#26181c] font-bold">{salon.rating}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Tags */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {salon.tags.slice(0, 3).map((tag) => (
+                          <span key={tag} className="px-2 py-0.5 bg-[#f6dce2] text-[#26181c] text-[11px] font-medium rounded-full">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+
+                      {/* Pricing & Action */}
+                      <div className="flex items-center justify-between mt-1 pt-3 border-t border-[#fce2e7]">
+                        <div>
+                          <span className="text-[11px] text-[#8c7077] font-bold">Services from</span>
+                          <span className="text-[16px] font-bold text-[#26181c] block">₹{salon.startingPrice}</span>
+                        </div>
+                        <button
+                          onClick={() => onSelectSalon(salon)}
+                          className="h-9 px-5 bg-[#8e004b] text-white text-[12px] font-semibold rounded-xl hover:bg-[#e6007e] active:scale-95 transition-all shadow-sm cursor-pointer"
+                        >
+                          Book
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* No GPS Results */}
+          {gpsFilterResult && gpsFilteredSalons.length === 0 && (
+            <div className="text-center py-8 bg-white rounded-2xl border border-[#e8e8e8]">
+              <span className="material-symbols-outlined text-[32px] text-[#e0bec6]">location_off</span>
+              <p className="text-[13px] font-semibold text-[#8c7077] mt-2">
+                No salons found within {gpsRadius}km
+              </p>
+              <button
+                onClick={() => setGpsRadius(10)}
+                className="mt-3 px-4 py-2 bg-[#e6007e] text-white text-[12px] font-bold rounded-xl cursor-pointer"
+              >
+                Expand to 10km
+              </button>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Offline / Cached Appointment Dashboard Card */}
       <AnimatePresence>

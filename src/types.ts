@@ -97,6 +97,8 @@ export interface Salon {
   completedBookings?: number;
   verifiedReviewsCount?: number;
   lastActiveTime?: number;
+  lat?: number;
+  lng?: number;
 }
 
 export interface Booking {
