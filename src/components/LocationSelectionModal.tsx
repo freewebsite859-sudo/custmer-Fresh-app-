@@ -61,36 +61,41 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
     setLocationError('');
 
     try {
-      // Dynamic GeoJSON detection — loads from /geo/jaipur.geojson
-      const position: LiveLocationResult = await getLiveLocation('jaipur');
+      // Use GPS manager for location detection
+      const result = await gpsManager.forceRefresh();
+      
+      if (result && result.area) {
+        const gpsLocation: UserLocation = {
+          city: result.city || 'Jaipur',
+          area: result.area || 'Current Location',
+          address: `GPS: ${result.lat.toFixed(4)}, ${result.lng.toFixed(4)}`,
+          isGPS: true,
+          lat: result.lat,
+          lng: result.lng,
+          accuracy: result.accuracy,
+          lastUpdated: result.timestamp,
+        };
 
-      const gpsLocation: UserLocation = {
-        city: position.city || 'Jaipur',
-        area: position.area || 'Current Location',
-        address: position.address || `GPS: ${position.lat.toFixed(4)}, ${position.lng.toFixed(4)}`,
-        isGPS: true,
-        lat: position.lat,
-        lng: position.lng,
-        accuracy: position.accuracy,
-        lastUpdated: position.timestamp,
-      };
+        setLiveCoords({
+          lat: result.lat,
+          lng: result.lng,
+          accuracy: result.accuracy,
+        });
 
-      setLiveCoords({
-        lat: position.lat,
-        lng: position.lng,
-        accuracy: position.accuracy,
-      });
+        setDetectedInfo({
+          area: result.area,
+          zone: result.zone,
+          pincode: result.pincode,
+          confidence: result.confidence,
+          found: result.confidence !== 'outside',
+          lookupMs: 0,
+        });
 
-      setDetectedInfo({
-        area: position.area,
-        zone: position.zone,
-        pincode: position.pincode,
-        confidence: position.confidence,
-        found: position.found,
-        lookupMs: position.lookupMs,
-      });
-
-      onSelectLocation(gpsLocation);
+        onSelectLocation(gpsLocation);
+      } else {
+        setLocationError('Unable to detect location. Please try manual selection.');
+        setShowDeniedModal(true);
+      }
     } catch (error: any) {
       console.error('Live location failed:', error);
       setLocationError(error.message || 'Failed to get your location');

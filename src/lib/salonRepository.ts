@@ -197,7 +197,7 @@ export async function fetchPublicSalons(client: SupabaseClient): Promise<Salon[]
       offers: mapOffers(cfg.offers),
       services,
       staff,
-    } satisfies Salon;
+    } as Salon;
   });
 
   // Resolve coordinates from GeoJSON area centroids (no API)
