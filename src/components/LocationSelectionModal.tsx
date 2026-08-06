@@ -6,21 +6,25 @@ import {
   LOCATION_PIN_URL,
   LOGO_SQUARE,
 } from '../data/mockData';
-import { getLiveLocation, isGeolocationAvailable } from '../utils/geolocation';
-import type { LiveLocationResult } from '../utils/geolocation';
+import gpsManager from '../services/gpsManager';
 
 interface LocationSelectionModalProps {
   currentLocation: UserLocation;
   onSelectLocation: (loc: UserLocation) => void;
   onClose: () => void;
+  gpsPermissionDenied?: boolean;
 }
 
 export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
   currentLocation,
   onSelectLocation,
   onClose,
+  gpsPermissionDenied = false,
 }) => {
-  const [viewMode, setViewMode] = useState<'permission' | 'picker'>('permission');
+  // If GPS permission denied, go straight to manual picker
+  const [viewMode, setViewMode] = useState<'permission' | 'picker'>(
+    gpsPermissionDenied ? 'picker' : 'permission'
+  );
   const [selectedZone, setSelectedZone] = useState<string>('');
   const [selectedArea, setSelectedArea] = useState<string>('');
   const [zoneSearch, setZoneSearch] = useState<string>('');
@@ -100,9 +104,14 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
     setHasInteracted(true);
     if (!isValid) return;
     
+    const areaName = `${selectedZone} > ${selectedArea}`;
+    
+    // Update GPS manager with manual selection
+    gpsManager.setManualLocation(areaName, selectedZone, '');
+    
     onSelectLocation({
       city: 'Jaipur',
-      area: `${selectedZone} > ${selectedArea}`,
+      area: areaName,
       isGPS: false,
     });
   };

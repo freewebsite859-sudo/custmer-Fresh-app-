@@ -6,6 +6,7 @@ import {
   INITIAL_LOCATION,
 } from './data/mockData';
 import { fetchPublicSalons } from './lib/salonRepository';
+import { useGpsLocation } from './hooks/useGpsLocation';
 import { createCustomerBooking, createAdvanceOrder, loadRazorpayCheckout, openRazorpayAdvanceCheckout, listCustomerBookings, subscribeToCustomerBookings, CustomerBookingRow } from './lib/bookingRepository';
 import { loadProfile, waitForProfile, updateProfile, uploadAvatar, avatarUrlWithVersion, subscribeToProfile, CustomerProfile, ProfilePatch } from './lib/profileRepository';
 import { loadFavorites, setFavorite, subscribeToFavorites } from './lib/favoritesRepository';
@@ -50,6 +51,16 @@ import { LegalScreen } from './components/LegalScreen';
 import { dashboardScreenForRole, isPlatformRole } from './lib/authRoles';
 
 export default function App() {
+  // GPS auto-detection (starts on app load, caches, 300m threshold)
+  const {
+    location: gpsLocation,
+    isLoading: gpsLoading,
+    permissionDenied: gpsPermissionDenied,
+    needsManual: gpsNeedsManual,
+    setManual: gpsSetManual,
+    forceRefresh: gpsForceRefresh,
+  } = useGpsLocation();
+
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<CustomerProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -248,17 +259,55 @@ export default function App() {
     };
   }, []);
 
+  // Sync GPS manager state → app location
   const [userLocation, setUserLocation] = useState<UserLocation>(() => {
-    const saved = localStorage.getItem('nexora_user_location');
+    if (gpsLocation) {
+      return {
+        city: gpsLocation.city || 'Jaipur',
+        area: gpsLocation.area || '',
+        address: '',
+        isGPS: gpsLocation.source === 'gps',
+        lat: gpsLocation.lat,
+        lng: gpsLocation.lng,
+        accuracy: gpsLocation.accuracy,
+        lastUpdated: gpsLocation.timestamp,
+      };
+    }
+    // Fallback to cache or default
+    const saved = localStorage.getItem('nexora_gps_location');
     if (saved) {
       try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved location:', e);
-      }
+        const cached = JSON.parse(saved);
+        return {
+          city: cached.city || 'Jaipur',
+          area: cached.area || '',
+          address: '',
+          isGPS: cached.source === 'gps',
+          lat: cached.lat,
+          lng: cached.lng,
+          accuracy: cached.accuracy,
+          lastUpdated: cached.timestamp,
+        };
+      } catch {}
     }
     return INITIAL_LOCATION;
   });
+
+  // Update app location when GPS manager detects new position
+  useEffect(() => {
+    if (gpsLocation && gpsLocation.area) {
+      setUserLocation({
+        city: gpsLocation.city || 'Jaipur',
+        area: gpsLocation.area,
+        address: '',
+        isGPS: gpsLocation.source === 'gps',
+        lat: gpsLocation.lat,
+        lng: gpsLocation.lng,
+        accuracy: gpsLocation.accuracy,
+        lastUpdated: gpsLocation.timestamp,
+      });
+    }
+  }, [gpsLocation?.area, gpsLocation?.lat, gpsLocation?.lng, gpsLocation?.source]);
 
   // Favourites + profile + bookings come from Supabase (single source of
   // truth). They hydrate after login and stay live via Realtime channels.
@@ -714,9 +763,7 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem('nexora_user_location', JSON.stringify(userLocation));
-  }, [userLocation]);
+  // GPS manager handles caching automatically via nexora_gps_location key
 
   // Favourites: optimistic local toggle + Supabase write; Realtime keeps
   // every logged-in device in sync (task STEPS 6/7).
@@ -1274,6 +1321,7 @@ export default function App() {
                 setCurrentScreen('home');
               }}
               onClose={() => setCurrentScreen('home')}
+              gpsPermissionDenied={gpsPermissionDenied}
             />
           )}
 
