@@ -7,6 +7,7 @@ import {
   LOGO_SQUARE,
 } from '../data/mockData';
 import { getLiveLocation, isGeolocationAvailable } from '../utils/geolocation';
+import type { LiveLocationResult } from '../utils/geolocation';
 
 interface LocationSelectionModalProps {
   currentLocation: UserLocation;
@@ -56,8 +57,8 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
     setLocationError('');
 
     try {
-      // Get real live location (Browser GPS → Google API fallback → Reverse Geocode)
-      const position = await getLiveLocation();
+      // Dynamic GeoJSON detection — loads from /geo/jaipur.geojson
+      const position: LiveLocationResult = await getLiveLocation('jaipur');
 
       const gpsLocation: UserLocation = {
         city: position.city || 'Jaipur',
@@ -76,12 +77,11 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
         accuracy: position.accuracy,
       });
 
-      // Store detected area info for display
       setDetectedInfo({
-        area: position.area || 'Unknown',
-        zone: (position as any).zone || 'Jaipur',
-        pincode: (position as any).pincode || '',
-        confidence: (position as any).confidence || 'approximate',
+        area: position.area,
+        zone: position.zone,
+        pincode: position.pincode,
+        confidence: position.confidence,
       });
 
       onSelectLocation(gpsLocation);
