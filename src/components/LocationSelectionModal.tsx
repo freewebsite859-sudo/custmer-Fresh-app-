@@ -31,6 +31,7 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
   const [hasInteracted, setHasInteracted] = useState<boolean>(false);
   const [locationError, setLocationError] = useState<string>('');
   const [liveCoords, setLiveCoords] = useState<{lat: number; lng: number; accuracy: number} | null>(null);
+  const [detectedInfo, setDetectedInfo] = useState<{area: string; zone: string; pincode: string; confidence: string} | null>(null);
 
   const zoneRef = useRef<HTMLDivElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
@@ -73,6 +74,14 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
         lat: position.lat,
         lng: position.lng,
         accuracy: position.accuracy,
+      });
+
+      // Store detected area info for display
+      setDetectedInfo({
+        area: position.area || 'Unknown',
+        zone: (position as any).zone || 'Jaipur',
+        pincode: (position as any).pincode || '',
+        confidence: (position as any).confidence || 'approximate',
       });
 
       onSelectLocation(gpsLocation);
@@ -172,15 +181,29 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
               {/* Live Location Info */}
               {liveCoords && (
                 <div className="w-full mt-3 p-3 bg-green-50 border border-green-200 rounded-xl">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2 mb-2">
                     <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                    <span className="text-[12px] font-bold text-green-700">Live Location Detected</span>
+                    <span className="text-[13px] font-bold text-green-700">
+                      {detectedInfo?.area || 'Location Detected'}
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 bg-green-200 text-green-800 rounded-full font-bold uppercase">
+                      {detectedInfo?.confidence || 'detected'}
+                    </span>
                   </div>
-                  <p className="text-[11px] text-green-600">
-                    📍 Lat: {liveCoords.lat.toFixed(6)}, Lng: {liveCoords.lng.toFixed(6)}
-                  </p>
-                  <p className="text-[11px] text-green-600">
-                    🎯 Accuracy: ±{Math.round(liveCoords.accuracy)}m
+                  {detectedInfo && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-medium">
+                        📍 Zone: {detectedInfo.zone}
+                      </span>
+                      {detectedInfo.pincode && (
+                        <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-medium">
+                          📮 PIN: {detectedInfo.pincode}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-green-600">
+                    🎯 GPS: {liveCoords.lat.toFixed(6)}, {liveCoords.lng.toFixed(6)} • ±{Math.round(liveCoords.accuracy)}m
                   </p>
                 </div>
               )}
@@ -413,11 +436,19 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
                   </>
                 )}
               </button>
-              {liveCoords && (
-                <div className="mt-2 flex items-center justify-center gap-1">
-                  <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-                  <span className="text-[10px] text-green-600 font-medium">
-                    GPS active • ±{Math.round(liveCoords.accuracy)}m accuracy
+              {liveCoords && detectedInfo && (
+                <div className="mt-2 flex flex-col items-center gap-1">
+                  <div className="flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                    <span className="text-[11px] text-green-700 font-bold">
+                      📍 {detectedInfo.area}
+                    </span>
+                    <span className="text-[9px] px-1 py-0.5 bg-green-200 text-green-800 rounded-full font-bold">
+                      {detectedInfo.confidence}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-green-600">
+                    Zone: {detectedInfo.zone} • PIN: {detectedInfo.pincode} • ±{Math.round(liveCoords.accuracy)}m
                   </span>
                 </div>
               )}
