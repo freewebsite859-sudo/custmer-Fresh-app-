@@ -101,18 +101,10 @@ export const SavedAddressesScreen: React.FC<SavedAddressesScreenProps> = ({
   const handleLocateMe = () => {
     if (!('geolocation' in navigator)) return;
     setIsLocating(true);
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      try {
-        const { latitude, longitude } = pos.coords;
-        const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=18`);
-        const data = await resp.json();
-        const addr = data?.address || {};
-        if (addr.postcode) setFormPincode(String(addr.postcode));
-        if (addr.city || addr.town) setFormCity(addr.city || addr.town);
-        if (addr.road) setFormStreet(addr.road);
-        triggerToast('GPS position found.');
-      } finally { setIsLocating(false); }
-    }, () => setIsLocating(false));
+    navigator.geolocation.getCurrentPosition((pos) => {
+      triggerToast(`GPS position found ±${Math.round(pos.coords.accuracy)}m.`);
+      setIsLocating(false);
+    }, () => setIsLocating(false), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
   };
 
   const handleSave = (e: React.FormEvent) => {

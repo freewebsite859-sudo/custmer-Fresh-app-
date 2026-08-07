@@ -542,7 +542,7 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
             </div>
             <h3 className="text-base font-bold text-[#26181c] mb-1">Location Access Required</h3>
             <p className="text-xs text-[#5a3f47] mb-5">
-              {locationError || 'Please enable location permissions in your browser settings to auto-detect nearby salons. We use GPS + Google Geolocation for accurate results.'}
+              {locationError || 'Please enable location to discover nearby salons.'}
             </p>
             <button
               onClick={() => {
