@@ -64,10 +64,14 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
       // Use GPS manager for location detection
       const result = await gpsManager.forceRefresh();
       
-      if (result && result.area) {
+      // GPS is valid as soon as coordinates are available. Area names are
+      // optional metadata, so a missing reverse-geocoded area must not turn a
+      // successful GPS reading into a manual-selection error.
+      if (result && Number.isFinite(result.lat) && Number.isFinite(result.lng) && !(result.lat === 0 && result.lng === 0)) {
+        const area = result.area || 'Current GPS Location';
         const gpsLocation: UserLocation = {
           city: result.city || 'Jaipur',
-          area: result.area || 'Current Location',
+          area,
           address: `GPS: ${result.lat.toFixed(4)}, ${result.lng.toFixed(4)}`,
           isGPS: true,
           lat: result.lat,
@@ -83,11 +87,11 @@ export const LocationSelectionModal: React.FC<LocationSelectionModalProps> = ({
         });
 
         setDetectedInfo({
-          area: result.area,
-          zone: result.zone,
-          pincode: result.pincode,
-          confidence: result.confidence,
-          found: result.confidence !== 'outside',
+          area,
+          zone: result.zone || '',
+          pincode: result.pincode || '',
+          confidence: result.confidence === 'outside' && !result.area ? 'nearest' : result.confidence,
+          found: true,
           lookupMs: 0,
         });
 
