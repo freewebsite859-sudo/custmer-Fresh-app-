@@ -171,17 +171,21 @@ class GpsManager {
     const { latitude: lat, longitude: lng, accuracy } = pos.coords;
     const timestamp = pos.timestamp;
 
+    console.log('[GpsManager] GPS received:', { lat, lng, accuracy, forceDetect });
+
     // ═══ FILTER: Ignore bad GPS readings ═══
     // If accuracy is worse than 100m, skip (jitter protection)
     if (accuracy > MIN_ACCURACY_M && !forceDetect) {
+      console.log('[GpsManager] SKIPPED: accuracy too low:', accuracy, '>', MIN_ACCURACY_M);
       return this.state || this.createDefaultState();
     }
 
     // ═══ CHECK: Has user moved > 300m? ═══
     if (!forceDetect && this.lastDetectedLat !== 0 && this.lastDetectedLng !== 0) {
       const moved = distanceMeters(this.lastDetectedLat, this.lastDetectedLng, lat, lng);
+      console.log('[GpsManager] Movement check:', { moved, threshold: MOVE_THRESHOLD_M });
       if (moved < MOVE_THRESHOLD_M) {
-        // User hasn't moved enough — keep current area
+        console.log('[GpsManager] SKIPPED: not moved enough, keeping:', this.state?.area);
         return this.state || this.createDefaultState();
       }
     }
@@ -190,6 +194,14 @@ class GpsManager {
     let detection: DetectionResult | null = null;
     if (this.geoIndex) {
       detection = this.geoIndex.detect(lat, lng);
+      console.log('[GpsManager] PIP result:', {
+        area: detection?.area,
+        zone: detection?.zone,
+        confidence: detection?.confidence,
+        featureId: detection?.featureId,
+      });
+    } else {
+      console.log('[GpsManager] WARNING: geoIndex is null!');
     }
 
     const newState: LocationState = {

@@ -238,11 +238,13 @@ class CityIndex {
     const t0 = performance.now();
 
     if (!this.loaded || this.features.length === 0) {
+      console.log('[GeoService] NOT LOADED or 0 features');
       return this.outsideResult(lng, lat, performance.now() - t0);
     }
 
     // ── STEP 1: Spatial grid lookup (O(1)) ──
     const candidates = this.grid.query(lng, lat);
+    console.log('[GeoService] Grid candidates:', candidates.length, 'for', lat, lng);
 
     // ── STEP 2: Point-in-Polygon on candidates ──
     for (const idx of candidates) {
@@ -252,6 +254,7 @@ class CityIndex {
         // Exact PIP test
         if (pointInPolygon(lng, lat, f.ring)) {
           const dist = haversine(lng, lat, f.centroid[0], f.centroid[1]);
+          console.log('[GeoService] ✅ POLYGON MATCH:', f.feature.properties.name);
           return {
             found: true,
             area: f.feature.properties.name,
@@ -285,6 +288,7 @@ class CityIndex {
     // ── STEP 4: Distance check ──
     if (nearestIdx >= 0 && nearestDist < MAX_DISTANCE_KM) {
       const f = this.features[nearestIdx];
+      console.log('[GeoService] ⚠️ NEAREST FALLBACK:', f.feature.properties.name, 'dist:', nearestDist.toFixed(2), 'km');
       return {
         found: true,
         area: f.feature.properties.name,
