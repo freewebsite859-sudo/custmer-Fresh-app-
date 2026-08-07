@@ -55,7 +55,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     isLoading: isLocationLoading,
     error: locationError,
     formattedDisplay,
+    hasResolvedLocality,
     refreshLocation,
+    retryGeocoding,
     setManualLocation,
     filterSalons: filterNearbySalons,
   } = useCurrentLocation(true);
@@ -361,17 +363,24 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* Header Location & Search */}
       <section className="flex flex-col gap-3.5">
         <div className="flex items-center justify-between">
-          <div className="flex flex-col">
+          <div className="flex flex-col min-w-0">
             <span className="text-[12px] font-medium text-[#8c7077]">Location</span>
             <button
               onClick={() => setIsLocationSelectorOpen(true)}
-              className="flex items-center gap-1.5 group text-left transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 group text-left transition-colors cursor-pointer max-w-full"
               title="Tap to change or detect location"
             >
-              <span className="text-[17px] font-semibold text-[#26181c] group-hover:text-[#e6007e]">
-                {formattedDisplay}
+              <span className="flex flex-col min-w-0">
+                <span className="text-[17px] font-semibold text-[#26181c] group-hover:text-[#e6007e] truncate leading-tight">
+                  {formattedDisplay}
+                </span>
+                {hasResolvedLocality && currentLocation?.city && currentLocation.area !== currentLocation.city && (
+                  <span className="text-[12px] font-medium text-[#8c7077] truncate leading-tight">
+                    {currentLocation.city}
+                  </span>
+                )}
               </span>
-              <span className={`material-symbols-outlined text-[18px] text-[#e6007e] transition-transform ${isLocationLoading ? 'animate-spin' : 'group-hover:translate-y-0.5'}`}>
+              <span className={`material-symbols-outlined text-[18px] text-[#e6007e] transition-transform shrink-0 ${isLocationLoading ? 'animate-spin' : 'group-hover:translate-y-0.5'}`}>
                 {isLocationLoading ? 'progress_activity' : currentLocation ? 'expand_more' : 'location_searching'}
               </span>
             </button>
@@ -379,14 +388,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
 
         {/* Location Error / Retry Banner — shown when GPS/geocoding fails.
-            No hardcoded city fallback; user can Retry or pick an area manually. */}
+            No hardcoded city fallback; user can Retry (re-runs geocoding
+            without re-prompting for GPS permission) or pick an area manually. */}
         {locationError && !isLocationLoading && (
           <div className="flex items-center justify-between px-3.5 py-2.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 shadow-2xs">
             <div className="flex items-center gap-2 min-w-0 pr-2">
               <span className="material-symbols-outlined text-[18px] text-rose-600 shrink-0">location_off</span>
               <div className="flex flex-col min-w-0">
                 <span className="font-bold text-[12px] truncate">📍 Location not available</span>
-                <span className="text-[11px] text-rose-700/90 leading-tight">{locationError.message}</span>
+                <span className="text-[11px] text-rose-700/90 leading-tight break-words">{locationError.message}</span>
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
@@ -397,7 +407,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 Choose area
               </button>
               <button
-                onClick={() => refreshLocation()}
+                onClick={() => {
+                  // If we already have GPS coords, retry only geocoding;
+                  // otherwise re-run full detection.
+                  if (currentLocation) {
+                    retryGeocoding();
+                  } else {
+                    refreshLocation();
+                  }
+                }}
                 className="px-3 py-1.5 bg-[#e6007e] text-white text-[11px] font-bold rounded-xl shadow-xs hover:bg-[#c9006e] active:scale-95 transition-all cursor-pointer"
               >
                 Tap to Retry
@@ -476,15 +494,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             </div>
           </div>
 
-          {/* Current GPS Accuracy Pill */}
+          {/* Current GPS Accuracy Pill — never prints raw coordinates */}
           <div className="flex items-center justify-between px-3 py-1.5 bg-[#fff0f2] rounded-xl border border-[#fde7f3] text-[11px]">
-            <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-              <span className="font-bold text-emerald-800">
-                📍 {currentLocation.area || currentLocation.city}
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
+              <span className="font-bold text-emerald-800 truncate">
+                📍 {hasResolvedLocality ? (currentLocation.area || currentLocation.city) : 'Near you'}
               </span>
             </div>
-            <span className="text-[#8c7077]">
+            <span className="text-[#8c7077] shrink-0 ml-2">
               Sorted nearest first (Haversine)
             </span>
           </div>

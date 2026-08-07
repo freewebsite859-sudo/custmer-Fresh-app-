@@ -15,7 +15,9 @@ export interface UseCurrentLocationResult {
   areaName: string;
   cityName: string;
   formattedDisplay: string;
+  hasResolvedLocality: boolean;
   refreshLocation: () => Promise<CurrentLocation | null>;
+  retryGeocoding: () => Promise<CurrentLocation | null>;
   setManualLocation: (localityName: string, coords?: { lat: number; lng: number }) => CurrentLocation;
   sortSalons: <T extends { lat?: number; lng?: number; distanceKm?: number; rating?: number; verified?: boolean }>(
     salons: T[]
@@ -66,42 +68,17 @@ export function useCurrentLocation(autoDetect = true): UseCurrentLocationResult 
     }
   }, []);
 
-  const permissionDenied = error?.type === 'PERMISSION_DENIED';
-
-  // Area & City display helpers
-  const areaName = location?.area || '';
-  const cityName = location?.city || '';
-
-  /**
-   * Display string shown in the header location button.
-   * Spec:
-   *  - "📍 Detecting your location..." while loading
-   *  - "📍 Location not available" on failure
-   *  - "📍 <area>, <city>" (or area/city alone) when resolved
-   *  No hardcoded city fallback is ever shown.
-   */
-  const formattedDisplay = (() => {
-    if (isLoading) {
-      return '📍 Detecting your location...';
+  const retryGeocoding = useCallback(async (): Promise<CurrentLocation | null> => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const loc = await locationService.retryGeocoding();
+      if (loc) setLocation(loc);
+      return loc;
+    } finally {
+      setIsLoading(false);
     }
-    if (error) {
-      return '📍 Location not available';
-    }
-    if (location) {
-      if (location.area && location.city && location.area !== location.city) {
-        return `📍 ${location.area}, ${location.city}`;
-      }
-      if (location.area) {
-        return `📍 ${location.area}`;
-      }
-      if (location.city) {
-        return `📍 ${location.city}`;
-      }
-      // GPS resolved but geocoding returned no locality — show coordinates.
-      return `📍 ${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`;
-    }
-    return '📍 Location not available';
-  })();
+  }, []);
 
   const setManualLocation = useCallback(
     (localityName: string, coords?: { lat: number; lng: number }): CurrentLocation => {
@@ -114,11 +91,52 @@ export function useCurrentLocation(autoDetect = true): UseCurrentLocationResult 
     []
   );
 
+  const permissionDenied = error?.type === 'PERMISSION_DENIED';
+
+  // Area & City display helpers
+  const areaName = location?.area || '';
+  const cityName = location?.city || '';
+
+  /**
+   * True when GPS resolved AND Google returned a real locality name.
+   * When false, the UI must NOT show raw coordinates.
+   */
+  const hasResolvedLocality = Boolean(location && (location.area || location.city));
+
+  /**
+   * Display string for the header location button.
+   * Spec:
+   *  - "📍 Detecting your location..." while loading
+   *  - "Unable to detect location" on failure / geocoding failure (no coords shown)
+   *  - "📍 <area>, <city>" / "📍 <area>" / "📍 <city>" when resolved
+   */
+  const formattedDisplay = (() => {
+    if (isLoading) {
+      return '📍 Detecting your location...';
+    }
+    if (error || !location) {
+      return 'Unable to detect location';
+    }
+    if (location.area && location.city && location.area !== location.city) {
+      return `📍 ${location.area}, ${location.city}`;
+    }
+    if (location.area) {
+      return `📍 ${location.area}`;
+    }
+    if (location.city) {
+      return `📍 ${location.city}`;
+    }
+    // GPS worked but geocoding returned no usable name — never show raw coords.
+    return 'Unable to detect location';
+  })();
+
   /**
    * Sort salons by:
    * 1. Nearest Distance (km)
    * 2. Highest Rating
    * 3. Featured (verified)
+   * Distance is always computed from coordinates whenever they exist, even if
+   * geocoding to a locality name failed.
    */
   const sortSalons = useCallback(
     <T extends { lat?: number; lng?: number; distanceKm?: number; rating?: number; verified?: boolean }>(
@@ -134,9 +152,12 @@ export function useCurrentLocation(autoDetect = true): UseCurrentLocationResult 
           const sLng = s.lng ?? 0;
           const hasSalonCoords = Number.isFinite(sLat) && Number.isFinite(sLng) && !(sLat === 0 && sLng === 0);
 
-          const distanceKm = hasUserCoords && hasSalonCoords
-            ? calculateHaversineDistanceKm(userLat, userLng, sLat, sLng)
-            : (s.distanceKm && s.distanceKm > 0 ? s.distanceKm : 999);
+          const distanceKm =
+            hasUserCoords && hasSalonCoords
+              ? calculateHaversineDistanceKm(userLat, userLng, sLat, sLng)
+              : s.distanceKm && s.distanceKm > 0
+                ? s.distanceKm
+                : 999;
 
           return {
             ...s,
@@ -187,7 +208,9 @@ export function useCurrentLocation(autoDetect = true): UseCurrentLocationResult 
     areaName,
     cityName,
     formattedDisplay,
+    hasResolvedLocality,
     refreshLocation,
+    retryGeocoding,
     setManualLocation,
     sortSalons,
     filterSalons,

@@ -1,19 +1,28 @@
 /**
  * GoogleGeocoder — Production Google Maps Geocoding API integration.
  * Converts GPS coordinates into Sublocality, Neighborhood, Locality, District, State, and Country.
- * 
+ *
  * Locality Extraction Priority per spec:
- *   Sublocality (e.g. "Vaishali Nagar")
+ *   sublocality_level_1
  *   ↓
- *   Neighborhood (e.g. "Civil Lines")
+ *   sublocality
  *   ↓
- *   Locality (e.g. "Jaipur")
+ *   neighborhood
+ *   ↓
+ *   locality
+ *   ↓
+ *   administrative_area_level_2
+ *   ↓
+ *   administrative_area_level_1
  */
 
 import { GeocodingResult, LocationError } from './locationTypes';
 
 // In-memory cache for recent reverse geocoding results (coordinates rounded to ~11 meters)
 const geocodeCache = new Map<string, GeocodingResult>();
+
+const LOG_PREFIX = '%c[Geocoding]';
+const LOG_STYLE = 'color:#e6007e;font-weight:bold';
 
 /**
  * Retrieves the Google Maps API Key strictly from Vite environment variables.
@@ -29,9 +38,21 @@ export function getGoogleApiKey(): string {
   return key.trim();
 }
 
+/** Strip the API key from a URL before logging it. */
+function redactKey(url: string): string {
+  return url.replace(/([?&]key=)[^&]+/i, '$1<REDACTED>');
+}
+
+/** Build the reverse-geocode URL. Exported for debugging/tests. */
+export function buildGeocodeUrl(latitude: number, longitude: number, apiKey: string): string {
+  return `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${encodeURIComponent(
+    apiKey,
+  )}&language=en`;
+}
+
 /**
  * Reverse geocodes latitude & longitude into structured administrative components.
- * 
+ *
  * @param latitude User GPS Latitude
  * @param longitude User GPS Longitude
  * @param customApiKey Optional override API key
@@ -40,101 +61,198 @@ export function getGoogleApiKey(): string {
 export async function reverseGeocode(
   latitude: number,
   longitude: number,
-  customApiKey?: string
+  customApiKey?: string,
 ): Promise<GeocodingResult> {
   const cacheKey = `${latitude.toFixed(4)},${longitude.toFixed(4)}`;
-  if (geocodeCache.has(cacheKey)) {
-    return geocodeCache.get(cacheKey)!;
+  const cached = geocodeCache.get(cacheKey);
+  if (cached) {
+    console.info(LOG_PREFIX, LOG_STYLE, 'Using cached reverse-geocode result for', cacheKey);
+    return cached;
   }
 
-  const apiKey = customApiKey || getGoogleApiKey();
+  const apiKey = (customApiKey || getGoogleApiKey()).trim();
 
+  // ---- STEP 1: API key ----
   if (!apiKey) {
+    const reason =
+      'VITE_GOOGLE_MAPS_API_KEY is missing. Set it in .env (and in Vercel → Production env vars), then rebuild.';
+    console.error(LOG_PREFIX, LOG_STYLE, '❌ API key missing.', reason);
+    const err: LocationError = { type: 'INVALID_API_KEY', message: reason };
+    throw err;
+  }
+
+  const url = buildGeocodeUrl(latitude, longitude, apiKey);
+  console.info(LOG_PREFIX, LOG_STYLE, {
+    latitude,
+    longitude,
+    url: redactKey(url),
+  });
+
+  let response: Response;
+  try {
+    response = await fetch(url, { method: 'GET' });
+  } catch (networkErr: any) {
+    const reason = diagnoseNetworkError(networkErr);
+    console.error(LOG_PREFIX, LOG_STYLE, '❌ Network error contacting Google Geocoding API.', {
+      error: networkErr,
+      reason,
+    });
     const err: LocationError = {
-      type: 'INVALID_API_KEY',
-      message: 'Google Maps API key is not configured in .env (VITE_GOOGLE_MAPS_API_KEY).',
+      type: 'GEOCODING_FAILED',
+      message: reason,
+      originalError: networkErr,
     };
     throw err;
   }
 
-  const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${encodeURIComponent(apiKey)}&language=en`;
+  console.info(LOG_PREFIX, LOG_STYLE, 'HTTP Status:', response.status, response.statusText);
 
+  if (!response.ok) {
+    const reason = `Google Geocoding HTTP error ${response.status} ${response.statusText}`;
+    console.error(LOG_PREFIX, LOG_STYLE, '❌', reason);
+    const err: LocationError = { type: 'GEOCODING_FAILED', message: reason };
+    throw err;
+  }
+
+  let data: any;
   try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      const err: LocationError = {
-        type: 'GEOCODING_FAILED',
-        message: `Google Geocoding HTTP error: ${response.status} ${response.statusText}`,
-      };
-      throw err;
-    }
+    data = await response.json();
+  } catch (parseErr: any) {
+    const reason = 'Google Geocoding returned a non-JSON response.';
+    console.error(LOG_PREFIX, LOG_STYLE, '❌', reason, parseErr);
+    const err: LocationError = { type: 'GEOCODING_FAILED', message: reason, originalError: parseErr };
+    throw err;
+  }
 
-    const data = await response.json();
+  console.info(LOG_PREFIX, LOG_STYLE, 'Complete Google response:', data);
 
-    if (data.status === 'OK' && Array.isArray(data.results) && data.results.length > 0) {
-      const extracted = parseGoogleGeocodingResults(data.results);
-      geocodeCache.set(cacheKey, extracted);
-      return extracted;
-    }
+  // ---- STEP 2: Translate Google status codes into precise, actionable errors ----
+  if (data.status !== 'OK') {
+    const diagnosis = diagnoseGoogleStatus(data.status, data.error_message);
+    console.error(LOG_PREFIX, LOG_STYLE, '❌ Google Geocoding failed.', {
+      status: data.status,
+      error_message: data.error_message,
+      diagnosis: diagnosis.message,
+    });
+    throw diagnosis;
+  }
 
-    if (data.status === 'ZERO_RESULTS') {
-      const err: LocationError = {
+  if (!Array.isArray(data.results) || data.results.length === 0) {
+    const reason = 'Google Geocoding returned no results for these coordinates.';
+    console.error(LOG_PREFIX, LOG_STYLE, '❌', reason);
+    const err: LocationError = { type: 'GEOCODING_FAILED', message: reason, originalError: data };
+    throw err;
+  }
+
+  const parsed = parseGoogleGeocodingResults(data.results);
+  console.info(LOG_PREFIX, LOG_STYLE, '✅ Extracted location:', {
+    area: parsed.area,
+    sublocality: parsed.sublocality,
+    neighborhood: parsed.neighborhood,
+    locality: parsed.locality,
+    district: parsed.district,
+    state: parsed.state,
+    country: parsed.country,
+  });
+
+  geocodeCache.set(cacheKey, parsed);
+  return parsed;
+}
+
+/**
+ * Maps a Google Geocoding status to a precise, human- and developer-actionable error.
+ */
+function diagnoseGoogleStatus(status: string, errorMessage?: string): LocationError {
+  const extra = errorMessage ? ` (${errorMessage})` : '';
+  switch (status) {
+    case 'ZERO_RESULTS':
+      return {
         type: 'GEOCODING_FAILED',
         message: 'No address found for these GPS coordinates.',
-        originalError: data,
+        originalError: { status, errorMessage },
       };
-      throw err;
-    }
-
-    if (data.status === 'OVER_QUERY_LIMIT') {
-      const err: LocationError = {
+    case 'OVER_QUERY_LIMIT':
+      return {
         type: 'QUOTA_EXCEEDED',
-        message: 'Google Geocoding API quota exceeded. Please check billing or usage limits.',
-        originalError: data,
+        message:
+          'Google Geocoding API quota exceeded. Enable billing and raise the Geocoding API quota in Google Cloud Console.',
+        originalError: { status, errorMessage },
       };
-      throw err;
-    }
-
-    if (data.status === 'REQUEST_DENIED') {
-      const err: LocationError = {
+    case 'REQUEST_DENIED':
+      return {
         type: 'INVALID_API_KEY',
-        message: data.error_message || 'Google Geocoding request denied. Check API key permissions and billing.',
-        originalError: data,
+        message: describeRequestDenied(errorMessage),
+        originalError: { status, errorMessage },
       };
-      throw err;
-    }
-
-    const err: LocationError = {
-      type: 'GEOCODING_FAILED',
-      message: data.error_message || `Google Geocoding failed with status: ${data.status}`,
-      originalError: data,
-    };
-    throw err;
-  } catch (error: any) {
-    if (error && error.type) {
-      throw error;
-    }
-    const err: LocationError = {
-      type: 'GEOCODING_FAILED',
-      message: error?.message || 'Network error while contacting Google Geocoding API.',
-      originalError: error,
-    };
-    throw err;
+    case 'INVALID_REQUEST':
+      return {
+        type: 'GEOCODING_FAILED',
+        message: `Invalid Google Geocoding request${extra}. The lat/lng parameters were malformed.`,
+        originalError: { status, errorMessage },
+      };
+    case 'UNKNOWN_ERROR':
+      return {
+        type: 'GEOCODING_FAILED',
+        message: 'Google Geocoding server error. Please tap to Retry.',
+        originalError: { status, errorMessage },
+      };
+    default:
+      return {
+        type: 'GEOCODING_FAILED',
+        message: `Google Geocoding failed: ${status}${extra}`,
+        originalError: { status, errorMessage },
+      };
   }
+}
+
+/** REQUEST_DENIED can mean several different things — explain the common ones. */
+function describeRequestDenied(errorMessage?: string): string {
+  const msg = (errorMessage || '').toLowerCase();
+  if (msg.includes('api key') && msg.includes('not')) {
+    return 'Invalid Google API key. Check VITE_GOOGLE_MAPS_API_KEY in Google Cloud Console and Vercel env vars.';
+  }
+  if (msg.includes('referer')) {
+    return 'Google API key referer restriction blocks this domain. Add the app/Vercel domain to the key\'s HTTP referrers (or use an unrestricted key for the web-service Geocoding API).';
+  }
+  if (msg.includes('billing')) {
+    return 'Billing is disabled for this Google Cloud project. Enable billing to use the Geocoding API.';
+  }
+  if (msg.includes('not been used') || msg.includes('enabled')) {
+    return 'The Geocoding API is not enabled for this Google Cloud project. Enable "Geocoding API" in Google Cloud Console.';
+  }
+  return (
+    errorMessage ||
+    'Google Geocoding request denied. Verify the API key, Geocoding API enablement, billing, and key restrictions.'
+  );
+}
+
+/** Network-level failures (CORS, DNS, offline, blocked domains). */
+function diagnoseNetworkError(err: any): string {
+  const msg = String(err?.message || err || '').toLowerCase();
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return 'No internet connection. Please check your network to detect location.';
+  }
+  if (msg.includes('failed to fetch') || msg.includes('networkerror')) {
+    return 'Network error while contacting Google Geocoding API. Check your connection, firewall, or CORS/referer settings.';
+  }
+  return err?.message || 'Network error while contacting Google Geocoding API.';
 }
 
 /**
  * Parses Google Geocoding address components following the priority:
- * Sublocality -> Neighborhood -> Locality -> District -> State -> Country
+ * sublocality_level_1 -> sublocality -> neighborhood -> locality
+ *   -> administrative_area_level_2 -> administrative_area_level_1
  */
 function parseGoogleGeocodingResults(results: any[]): GeocodingResult {
+  let sublocalityLevel1 = '';
   let sublocality = '';
   let neighborhood = '';
   let locality = '';
-  let district = '';
-  let state = '';
+  let postalTown = '';
+  let district = ''; // administrative_area_level_2
+  let state = ''; // administrative_area_level_1
   let country = '';
-  let formattedAddress = results[0]?.formatted_address || '';
+  const formattedAddress = results[0]?.formatted_address || '';
   const placeId = results[0]?.place_id || '';
 
   for (const result of results) {
@@ -142,67 +260,60 @@ function parseGoogleGeocodingResults(results: any[]): GeocodingResult {
 
     for (const component of result.address_components) {
       const types: string[] = component.types || [];
+      const value = component.long_name || component.short_name || '';
+      if (!value) continue;
 
-      // 1. Sublocality (e.g. "Vaishali Nagar", "Malviya Nagar")
-      if (!sublocality) {
-        if (
-          types.includes('sublocality_level_1') ||
-          types.includes('sublocality_level_2') ||
-          types.includes('sublocality')
-        ) {
-          sublocality = component.long_name || component.short_name || '';
-        }
+      // Priority 1: sublocality_level_1 (e.g. "Vaishali Nagar")
+      if (!sublocalityLevel1 && types.includes('sublocality_level_1')) {
+        sublocalityLevel1 = value;
       }
-
-      // 2. Neighborhood
-      if (!neighborhood) {
-        if (types.includes('neighborhood')) {
-          neighborhood = component.long_name || component.short_name || '';
-        }
+      // Priority 2: sublocality (level_2 / generic)
+      if (!sublocality && (types.includes('sublocality_level_2') || types.includes('sublocality'))) {
+        sublocality = value;
       }
-
-      // 3. Locality (e.g. "Jaipur")
-      if (!locality) {
-        if (types.includes('locality') || types.includes('postal_town')) {
-          locality = component.long_name || component.short_name || '';
-        }
+      // Priority 3: neighborhood
+      if (!neighborhood && types.includes('neighborhood')) {
+        neighborhood = value;
       }
-
-      // 4. District (e.g. "Jaipur District")
-      if (!district) {
-        if (types.includes('administrative_area_level_2') || types.includes('administrative_area_level_3')) {
-          district = component.long_name || component.short_name || '';
-        }
+      // Priority 4: locality
+      if (!locality && (types.includes('locality') || types.includes('postal_town'))) {
+        locality = value;
       }
-
-      // 5. State (e.g. "Rajasthan")
-      if (!state) {
-        if (types.includes('administrative_area_level_1')) {
-          state = component.long_name || component.short_name || '';
-        }
+      if (!postalTown && types.includes('postal_town')) {
+        postalTown = value;
       }
-
-      // 6. Country (e.g. "India")
-      if (!country) {
-        if (types.includes('country')) {
-          country = component.long_name || component.short_name || '';
-        }
+      // Priority 5: administrative_area_level_2 (district)
+      if (!district && (types.includes('administrative_area_level_2') || types.includes('administrative_area_level_3'))) {
+        district = value;
+      }
+      // Priority 6: administrative_area_level_1 (state)
+      if (!state && types.includes('administrative_area_level_1')) {
+        state = value;
+      }
+      if (!country && types.includes('country')) {
+        country = value;
       }
     }
   }
 
-  // Locality Priority: sublocality -> neighborhood -> locality -> district -> state.
-  // NOTE: We intentionally do NOT hardcode "Jaipur"/"Rajasthan"/"India" here.
-  // When Google cannot resolve a component it stays empty so the UI can
-  // clearly distinguish a real geocoded locality from a guess.
-  const bestLocality = sublocality || neighborhood || locality || district || state || '';
-  const resolvedCity = locality || district || sublocality || '';
+  // Best display area: follow the exact priority chain.
+  const area =
+    sublocalityLevel1 || sublocality || neighborhood || locality || district || state || '';
+  const resolvedCity = locality || postalTown || district || sublocalityLevel1 || '';
   const resolvedState = state || '';
   const resolvedCountry = country || '';
 
+  if (!area) {
+    const reason =
+      'Google response had no usable address_components (no sublocality, locality, district, or state).';
+    console.error(LOG_PREFIX, LOG_STYLE, '❌', reason, results);
+    const err: LocationError = { type: 'GEOCODING_FAILED', message: reason, originalError: results };
+    throw err;
+  }
+
   return {
-    area: bestLocality,
-    sublocality,
+    area,
+    sublocality: sublocalityLevel1 || sublocality,
     neighborhood,
     locality: resolvedCity,
     district,
@@ -217,6 +328,7 @@ function parseGoogleGeocodingResults(results: any[]): GeocodingResult {
 export const GoogleGeocoder = {
   reverseGeocode,
   getGoogleApiKey,
+  buildGeocodeUrl,
 };
 
 export default GoogleGeocoder;
