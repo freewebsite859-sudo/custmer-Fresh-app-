@@ -5,8 +5,11 @@
  * Design rules (per product spec):
  *  - Uses navigator.geolocation.getCurrentPosition with enableHighAccuracy.
  *  - Reverse-geocodes via Google Geocoding API using VITE_GOOGLE_MAPS_API_KEY.
- *  - NEVER falls back to a hardcoded city (e.g. "Jaipur"). On geocoding failure
- *    the resolved GPS coordinates are surfaced but no fake locality is invented.
+ *  - NEVER falls back to a hardcoded city (e.g. "Jaipur").
+ *  - If GPS succeeds but geocoding fails, coordinates are KEPT (so Nearby
+ *    Salons can still be distance-sorted) but a `geocodingError` is surfaced
+ *    so the UI can show "Unable to detect location" + Retry instead of
+ *    printing raw latitude/longitude.
  */
 
 import { CurrentLocation, LocationError } from './locationTypes';
@@ -27,6 +30,7 @@ type LocationSubscriber = (location: CurrentLocation | null, error: LocationErro
 class LocationService {
   private currentLocation: CurrentLocation | null = null;
   private currentError: LocationError | null = null;
+  private geocodingError: LocationError | null = null;
   private isDetecting = false;
   private subscribers = new Set<LocationSubscriber>();
 
@@ -54,6 +58,10 @@ class LocationService {
 
   public getError(): LocationError | null {
     return this.currentError;
+  }
+
+  public getGeocodingError(): LocationError | null {
+    return this.geocodingError;
   }
 
   public subscribe(subscriber: LocationSubscriber): () => void {
@@ -91,6 +99,7 @@ class LocationService {
         message: 'Geolocation is not supported by your browser or device.',
       };
       this.currentError = err;
+      this.geocodingError = null;
       this.emit();
       throw err;
     }
@@ -101,12 +110,14 @@ class LocationService {
         message: 'No internet connection. Please check your network to detect location.',
       };
       this.currentError = err;
+      this.geocodingError = null;
       this.emit();
       throw err;
     }
 
     this.isDetecting = true;
     this.currentError = null;
+    this.geocodingError = null;
 
     try {
       // 1. Get high accuracy GPS coordinates
@@ -114,31 +125,46 @@ class LocationService {
       const { latitude, longitude, accuracy } = position.coords;
 
       // 2. Reverse geocode via Google Geocoding API.
-      //    If the API key is missing, network fails, or Google returns an
-      //    error, we DO NOT invent a hardcoded city. We surface the raw
-      //    coordinates as the formatted address and leave locality blank.
+      //    On failure we DO NOT throw away GPS, and we DO NOT invent a city.
+      //    We keep the coordinates (for distance sorting) and remember the
+      //    geocoding error so the UI can show an honest "Retry" state.
       let geocoded;
       try {
         geocoded = await GoogleGeocoder.reverseGeocode(latitude, longitude);
+        this.geocodingError = null;
       } catch (geoErr: any) {
-        console.warn('Google geocoding notice:', geoErr?.message || geoErr);
-        const coordsLabel = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
-        geocoded = {
+        const geoError = (geoErr as LocationError) || {
+          type: 'GEOCODING_FAILED' as const,
+          message: 'Unable to resolve your address from GPS coordinates.',
+        };
+        console.warn('[LocationService] Google geocoding failed:', geoError.message, geoErr);
+        this.geocodingError = geoError;
+
+        const coordsLocation: CurrentLocation = {
+          latitude,
+          longitude,
           area: '',
-          sublocality: '',
-          neighborhood: '',
-          locality: '',
-          district: '',
+          city: '',
           state: '',
           country: '',
-          formattedAddress: coordsLabel,
-        };
+          formattedAddress: '',
+          accuracy: Math.round(accuracy || 0),
+          timestamp: position.timestamp || Date.now(),
+          source: 'gps',
+        } as CurrentLocation;
+
+        this.currentLocation = coordsLocation;
+        this.currentError = geoError;
+        this.saveToStorage(coordsLocation);
+        this.emit();
+        return coordsLocation;
       }
 
       // 3. Assemble CurrentLocation object. Best locality follows the
       //    priority sublocality -> neighborhood -> locality. Empty strings
       //    remain empty (no "Jaipur" hardcoding).
-      const bestArea = geocoded.area || geocoded.sublocality || geocoded.neighborhood || geocoded.locality || '';
+      const bestArea =
+        geocoded.area || geocoded.sublocality || geocoded.neighborhood || geocoded.locality || '';
 
       const location: CurrentLocation = {
         latitude,
@@ -151,7 +177,7 @@ class LocationService {
         city: geocoded.locality || '',
         state: geocoded.state || '',
         country: geocoded.country || '',
-        formattedAddress: geocoded.formattedAddress || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
+        formattedAddress: geocoded.formattedAddress || '',
         accuracy: Math.round(accuracy || 0),
         timestamp: position.timestamp || Date.now(),
         source: 'gps',
@@ -159,6 +185,7 @@ class LocationService {
 
       this.currentLocation = location;
       this.currentError = null;
+      this.geocodingError = null;
       this.saveToStorage(location);
       this.emit();
       return location;
@@ -173,10 +200,54 @@ class LocationService {
   }
 
   /**
+   * Retry only the geocoding step for an already-detected GPS position.
+   * Used by the UI "Tap to Retry" action when GPS worked but the Google
+   * call failed — avoids re-prompting the user for location permission.
+   */
+  public async retryGeocoding(): Promise<CurrentLocation | null> {
+    if (!this.currentLocation) {
+      return this.detectLocation(true);
+    }
+    const { latitude, longitude, accuracy } = this.currentLocation;
+    try {
+      const geocoded = await GoogleGeocoder.reverseGeocode(latitude, longitude);
+      const bestArea =
+        geocoded.area || geocoded.sublocality || geocoded.neighborhood || geocoded.locality || '';
+      const location: CurrentLocation = {
+        ...this.currentLocation,
+        area: bestArea,
+        sublocality: geocoded.sublocality || undefined,
+        neighborhood: geocoded.neighborhood || undefined,
+        locality: geocoded.locality || undefined,
+        district: geocoded.district || undefined,
+        city: geocoded.locality || '',
+        state: geocoded.state || '',
+        country: geocoded.country || '',
+        formattedAddress: geocoded.formattedAddress || '',
+        accuracy: accuracy || 0,
+        source: 'gps',
+      } as CurrentLocation;
+      this.currentLocation = location;
+      this.currentError = null;
+      this.geocodingError = null;
+      this.saveToStorage(location);
+      this.emit();
+      return location;
+    } catch (geoErr: any) {
+      const geoError = (geoErr as LocationError) || {
+        type: 'GEOCODING_FAILED' as const,
+        message: 'Unable to resolve your address from GPS coordinates.',
+      };
+      this.geocodingError = geoError;
+      this.currentError = geoError;
+      this.emit();
+      return null;
+    }
+  }
+
+  /**
    * Sets the location manually from the LocationSelectionModal (one of the
-   * 100+ Jaipur localities). This is an explicit user choice and does not
-   * rely on any hardcoded default — the chosen locality's coordinates come
-   * from the curated localities dataset.
+   * 100+ Jaipur localities). Explicit user choice — no hardcoded default.
    */
   public setManualLocation(localityName: string, coords?: { lat: number; lng: number }): CurrentLocation {
     const resolved = coords || findLocalityCoordinates(localityName);
@@ -204,11 +275,12 @@ class LocationService {
       formattedAddress: `${localityName}, Jaipur, Rajasthan, India`,
       accuracy: 0,
       timestamp: Date.now(),
-      source: MANUAL_SOURCE,
+      source: 'manual',
     } as CurrentLocation;
 
     this.currentLocation = location;
     this.currentError = null;
+    this.geocodingError = null;
     this.saveToStorage(location);
     this.emit();
     return location;
@@ -228,21 +300,22 @@ class LocationService {
     if (typeof err === 'object' && 'code' in err) {
       const code = (err as GeolocationPositionError).code;
       switch (code) {
-        case 1: // PERMISSION_DENIED
+        case 1:
           return {
             type: 'PERMISSION_DENIED',
             code: 1,
             message: 'Please enable location to discover nearby salons.',
             originalError: err,
           };
-        case 2: // POSITION_UNAVAILABLE
+        case 2:
           return {
             type: 'POSITION_UNAVAILABLE',
             code: 2,
-            message: 'Unable to acquire your GPS position. Please make sure location/GPS is enabled on your device.',
+            message:
+              'Unable to acquire your GPS position. Please make sure location/GPS is enabled on your device.',
             originalError: err,
           };
-        case 3: // TIMEOUT
+        case 3:
           return {
             type: 'TIMEOUT',
             code: 3,
@@ -277,6 +350,7 @@ class LocationService {
   public clearLocation(): void {
     this.currentLocation = null;
     this.currentError = null;
+    this.geocodingError = null;
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {}
