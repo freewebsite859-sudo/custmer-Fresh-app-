@@ -414,31 +414,20 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     }
     setIsDetectingLocation(true);
     navigator.geolocation.getCurrentPosition(
-      async (pos) => {
+      (pos) => {
         try {
           const { latitude, longitude } = pos.coords;
-          const resp = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=16&addressdetails=1`,
-            { headers: { 'Accept-Language': 'en' } }
-          );
-          const data = await resp.json();
-          const addr = data?.address || {};
-          const city = addr.city || addr.town || addr.county || '';
-          const area = addr.suburb || addr.neighbourhood || addr.residential || '';
-          if (city.toLowerCase().includes('jaipur')) setEditFormCity('jaipur');
-          if (area) setEditFormArea(area);
-          triggerToast('Location detected — verify before saving.');
-        } catch {
-          triggerToast('Location lookup failed.');
+          // Native GPS only — no reverse geocoding API. Use coords confidence hint.
+          triggerToast(`GPS acquired (${latitude.toFixed(4)}, ${longitude.toFixed(4)}) — verify area before saving.`);
         } finally {
           setIsDetectingLocation(false);
         }
       },
       () => {
         setIsDetectingLocation(false);
-        triggerToast('Permission denied or GPS unavailable.');
+        triggerToast('Please enable location to discover nearby salons.');
       },
-      { timeout: 10000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   };
 
@@ -523,18 +512,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const handleLocateMeInForm = () => {
     if (!('geolocation' in navigator)) return;
     setIsLocating(true);
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      try {
-        const { latitude, longitude } = pos.coords;
-        const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=18`);
-        const data = await resp.json();
-        const addr = data?.address || {};
-        if (addr.postcode) setFormPincode(String(addr.postcode));
-        if (addr.city || addr.town) setFormCity(addr.city || addr.town);
-        if (addr.road) setFormStreet(addr.road);
-        triggerToast('GPS position found.');
-      } finally { setIsLocating(false); }
-    }, () => setIsLocating(false));
+    navigator.geolocation.getCurrentPosition((pos) => {
+      triggerToast(`GPS position found ±${Math.round(pos.coords.accuracy)}m.`);
+      setIsLocating(false);
+    }, () => setIsLocating(false), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
   };
 
   const upcomingCount = bookings.filter((b) => b.status === 'CONFIRMED' || b.status === 'PENDING').length;
