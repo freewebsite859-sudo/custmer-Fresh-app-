@@ -458,7 +458,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                       : 'text-[#5a3f47] hover:text-[#e6007e]'
                   }`}
                 >
-                  {r === 'all' ? 'All' : `${r} km`}
+                  {r === 'all' ? 'All' : `Within ${r} km`}
                 </button>
               ))}
             </div>

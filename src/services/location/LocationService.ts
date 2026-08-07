@@ -3,7 +3,7 @@
  * Coordinates navigator.geolocation and Google Geocoding API.
  */
 
-import { CurrentLocation, LocationError, LocationErrorType } from './locationTypes';
+import { CurrentLocation, LocationError } from './locationTypes';
 import { GoogleGeocoder } from './GoogleGeocoder';
 
 const STORAGE_KEY = 'nexora_current_location';
@@ -26,9 +26,6 @@ class LocationService {
     this.hydrateFromStorage();
   }
 
-  /**
-   * Hydrates initial location from localStorage cache if available.
-   */
   private hydrateFromStorage(): void {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -43,26 +40,16 @@ class LocationService {
     }
   }
 
-  /**
-   * Returns the current cached location, if any.
-   */
   public getLocation(): CurrentLocation | null {
     return this.currentLocation;
   }
 
-  /**
-   * Returns the last location error, if any.
-   */
   public getError(): LocationError | null {
     return this.currentError;
   }
 
-  /**
-   * Subscribes to location updates and errors. Returns an unsubscribe function.
-   */
   public subscribe(subscriber: LocationSubscriber): () => void {
     this.subscribers.add(subscriber);
-    // Initial emit
     subscriber(this.currentLocation, this.currentError);
     return () => {
       this.subscribers.delete(subscriber);
@@ -85,7 +72,6 @@ class LocationService {
    */
   public async detectLocation(forceRefresh = false): Promise<CurrentLocation> {
     if (this.isDetecting) {
-      // Return existing cached or wait
       if (this.currentLocation && !forceRefresh) {
         return this.currentLocation;
       }
@@ -124,14 +110,16 @@ class LocationService {
       try {
         geocoded = await GoogleGeocoder.reverseGeocode(latitude, longitude);
       } catch (geoErr: any) {
-        // If Google Geocoding failed (e.g. key missing in dev), provide graceful fallback
         console.warn('Google geocoding notice:', geoErr?.message || geoErr);
         geocoded = {
           area: 'Jaipur',
-          city: 'Jaipur',
+          sublocality: '',
+          neighborhood: '',
+          locality: 'Jaipur',
+          district: 'Jaipur',
           state: 'Rajasthan',
           country: 'India',
-          formattedAddress: `GPS: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
+          formattedAddress: `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
         };
       }
 
@@ -139,8 +127,12 @@ class LocationService {
       const location: CurrentLocation = {
         latitude,
         longitude,
-        area: geocoded.area || geocoded.city || 'Jaipur',
-        city: geocoded.city || 'Jaipur',
+        area: geocoded.area || 'Jaipur',
+        sublocality: geocoded.sublocality || undefined,
+        neighborhood: geocoded.neighborhood || undefined,
+        locality: geocoded.locality || 'Jaipur',
+        district: geocoded.district || undefined,
+        city: geocoded.locality || 'Jaipur',
         state: geocoded.state || 'Rajasthan',
         country: geocoded.country || 'India',
         formattedAddress: geocoded.formattedAddress || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
@@ -163,18 +155,12 @@ class LocationService {
     }
   }
 
-  /**
-   * Promisified navigator.geolocation.getCurrentPosition with spec-compliant options.
-   */
   private getBrowserPosition(): Promise<GeolocationPosition> {
     return new Promise((resolve, reject) => {
       navigator.geolocation.getCurrentPosition(resolve, reject, GPS_OPTIONS);
     });
   }
 
-  /**
-   * Maps native GeolocationPositionError or exceptions into friendly LocationError.
-   */
   private mapGeolocationError(err: any): LocationError {
     if (err && err.type) {
       return err as LocationError;
@@ -187,7 +173,7 @@ class LocationService {
           return {
             type: 'PERMISSION_DENIED',
             code: 1,
-            message: 'Location access was denied. Please allow location permissions in your browser or device settings.',
+            message: 'Please enable location to discover nearby salons.',
             originalError: err,
           };
         case 2: // POSITION_UNAVAILABLE
@@ -208,7 +194,7 @@ class LocationService {
           return {
             type: 'UNKNOWN',
             code,
-            message: err.message || 'An unexpected geolocation error occurred.',
+            message: err.message || 'Unable to detect your location. Tap to Retry.',
             originalError: err,
           };
       }
@@ -216,7 +202,7 @@ class LocationService {
 
     return {
       type: 'UNKNOWN',
-      message: err?.message || 'Unable to detect location. Please tap to retry.',
+      message: err?.message || 'Unable to detect your location. Tap to Retry.',
       originalError: err,
     };
   }
@@ -229,9 +215,6 @@ class LocationService {
     }
   }
 
-  /**
-   * Clears saved location state.
-   */
   public clearLocation(): void {
     this.currentLocation = null;
     this.currentError = null;

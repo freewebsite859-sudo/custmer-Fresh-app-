@@ -1,9 +1,13 @@
 export interface CurrentLocation {
   latitude: number;
   longitude: number;
-  area: string;            // Sublocality (e.g. "Vaishali Nagar") or Locality
+  area: string;            // Extracted best locality: sublocality -> neighborhood -> locality
+  sublocality?: string;
+  neighborhood?: string;
+  locality?: string;
+  district?: string;       // Administrative Area Level 2 (e.g. Jaipur District)
   city: string;            // Locality (e.g. "Jaipur")
-  state: string;           // Administrative Area (e.g. "Rajasthan")
+  state: string;           // Administrative Area Level 1 (e.g. "Rajasthan")
   country: string;         // Country (e.g. "India")
   formattedAddress: string;
   accuracy: number;        // Accuracy in meters
@@ -28,8 +32,11 @@ export interface LocationError {
 }
 
 export interface GeocodingResult {
-  area: string;
-  city: string;
+  area: string;            // Best locality following sublocality -> neighborhood -> locality
+  sublocality: string;
+  neighborhood: string;
+  locality: string;
+  district: string;
   state: string;
   country: string;
   formattedAddress: string;

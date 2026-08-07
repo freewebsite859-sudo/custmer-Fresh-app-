@@ -3,9 +3,9 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { CurrentLocation, LocationError } from '../services/location/locationTypes';
+import { CurrentLocation, LocationError, RadiusOption } from '../services/location/locationTypes';
 import { locationService } from '../services/location/LocationService';
-import { sortNearby } from '../services/location/DistanceCalculator';
+import { calculateHaversineDistanceKm, formatDistance } from '../services/location/DistanceCalculator';
 
 export interface UseCurrentLocationResult {
   location: CurrentLocation | null;
@@ -16,12 +16,12 @@ export interface UseCurrentLocationResult {
   cityName: string;
   formattedDisplay: string;
   refreshLocation: () => Promise<CurrentLocation | null>;
-  sortSalons: <T extends { lat?: number; lng?: number; distanceKm?: number }>(
+  sortSalons: <T extends { lat?: number; lng?: number; distanceKm?: number; rating?: number; verified?: boolean }>(
     salons: T[]
   ) => Array<T & { distanceKm: number; formattedDistance: string }>;
-  filterSalons: <T extends { lat?: number; lng?: number; distanceKm?: number }>(
+  filterSalons: <T extends { lat?: number; lng?: number; distanceKm?: number; rating?: number; verified?: boolean }>(
     salons: T[],
-    radiusKm: number | 'all'
+    radiusKm: RadiusOption
   ) => Array<T & { distanceKm: number; formattedDistance: string }>;
 }
 
@@ -76,7 +76,7 @@ export function useCurrentLocation(autoDetect = true): UseCurrentLocationResult 
       return 'Detecting location...';
     }
     if (error) {
-      return 'Unable to detect location';
+      return 'Unable to detect your location';
     }
     if (location) {
       if (location.area && location.city && location.area !== location.city) {
@@ -92,34 +92,69 @@ export function useCurrentLocation(autoDetect = true): UseCurrentLocationResult 
     return 'Location not configured';
   })();
 
+  /**
+   * Sort salons by:
+   * 1. Nearest Distance (km)
+   * 2. Highest Rating
+   * 3. Featured (verified)
+   */
   const sortSalons = useCallback(
-    <T extends { lat?: number; lng?: number; distanceKm?: number }>(
+    <T extends { lat?: number; lng?: number; distanceKm?: number; rating?: number; verified?: boolean }>(
       salons: T[]
     ): Array<T & { distanceKm: number; formattedDistance: string }> => {
-      if (!location) {
-        return salons.map((s) => ({
-          ...s,
-          distanceKm: s.distanceKm || 0,
-          formattedDistance: s.distanceKm ? `${s.distanceKm} km` : '',
-        }));
-      }
-      return sortNearby(salons, location.latitude, location.longitude);
+      const userLat = location?.latitude;
+      const userLng = location?.longitude;
+      const hasUserCoords = typeof userLat === 'number' && typeof userLng === 'number';
+
+      return salons
+        .map((s) => {
+          const sLat = s.lat ?? 0;
+          const sLng = s.lng ?? 0;
+          const hasSalonCoords = Number.isFinite(sLat) && Number.isFinite(sLng) && !(sLat === 0 && sLng === 0);
+
+          const distanceKm = hasUserCoords && hasSalonCoords
+            ? calculateHaversineDistanceKm(userLat, userLng, sLat, sLng)
+            : (s.distanceKm && s.distanceKm > 0 ? s.distanceKm : 999);
+
+          return {
+            ...s,
+            distanceKm: Math.round(distanceKm * 100) / 100,
+            formattedDistance: formatDistance(distanceKm),
+          };
+        })
+        .sort((a, b) => {
+          // 1. Nearest Distance
+          if (a.distanceKm !== b.distanceKm) {
+            return a.distanceKm - b.distanceKm;
+          }
+          // 2. Highest Rating
+          const aRating = a.rating ?? 0;
+          const bRating = b.rating ?? 0;
+          if (bRating !== aRating) {
+            return bRating - aRating;
+          }
+          // 3. Featured / Verified
+          if (a.verified !== b.verified) {
+            return a.verified ? -1 : 1;
+          }
+          return 0;
+        });
     },
     [location]
   );
 
   const filterSalons = useCallback(
-    <T extends { lat?: number; lng?: number; distanceKm?: number }>(
+    <T extends { lat?: number; lng?: number; distanceKm?: number; rating?: number; verified?: boolean }>(
       salons: T[],
-      radiusKm: number | 'all'
+      radiusKm: RadiusOption
     ): Array<T & { distanceKm: number; formattedDistance: string }> => {
       const sorted = sortSalons(salons);
-      if (radiusKm === 'all' || !location) {
+      if (radiusKm === 'all') {
         return sorted;
       }
       return sorted.filter((s) => s.distanceKm <= radiusKm);
     },
-    [sortSalons, location]
+    [sortSalons]
   );
 
   return {

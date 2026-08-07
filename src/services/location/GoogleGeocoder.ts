@@ -1,18 +1,18 @@
 /**
  * GoogleGeocoder — Production Google Maps Geocoding API integration.
- * Converts GPS coordinates into Sublocality, Locality, State, and Country.
+ * Converts GPS coordinates into Sublocality, Neighborhood, Locality, District, State, and Country.
  * 
- * Preferred Display hierarchy:
+ * Locality Extraction Priority per spec:
  *   Sublocality (e.g. "Vaishali Nagar")
  *   ↓
- *   Locality (e.g. "Jaipur")
+ *   Neighborhood (e.g. "Civil Lines")
  *   ↓
- *   State (e.g. "Rajasthan")
+ *   Locality (e.g. "Jaipur")
  */
 
 import { GeocodingResult, LocationError } from './locationTypes';
 
-// In-memory cache for recent reverse geocoding results
+// In-memory cache for recent reverse geocoding results (coordinates rounded to ~11 meters)
 const geocodeCache = new Map<string, GeocodingResult>();
 
 /**
@@ -35,7 +35,7 @@ export function getGoogleApiKey(): string {
  * @param latitude User GPS Latitude
  * @param longitude User GPS Longitude
  * @param customApiKey Optional override API key
- * @returns GeocodingResult with extracted Sublocality, Locality, State, and Country
+ * @returns GeocodingResult with extracted Sublocality, Neighborhood, Locality, District, State, Country
  */
 export async function reverseGeocode(
   latitude: number,
@@ -50,7 +50,6 @@ export async function reverseGeocode(
   const apiKey = customApiKey || getGoogleApiKey();
 
   if (!apiKey) {
-    // If no Google Maps API key is configured in .env, throw descriptive error
     const err: LocationError = {
       type: 'INVALID_API_KEY',
       message: 'Google Maps API key is not configured in .env (VITE_GOOGLE_MAPS_API_KEY).',
@@ -125,12 +124,14 @@ export async function reverseGeocode(
 }
 
 /**
- * Parses Google Geocoding address components according to priority:
- * Sublocality -> Locality -> Administrative Area (State) -> Country
+ * Parses Google Geocoding address components following the priority:
+ * Sublocality -> Neighborhood -> Locality -> District -> State -> Country
  */
 function parseGoogleGeocodingResults(results: any[]): GeocodingResult {
   let sublocality = '';
+  let neighborhood = '';
   let locality = '';
+  let district = '';
   let state = '';
   let country = '';
   let formattedAddress = results[0]?.formatted_address || '';
@@ -140,39 +141,48 @@ function parseGoogleGeocodingResults(results: any[]): GeocodingResult {
     if (!Array.isArray(result.address_components)) continue;
 
     for (const component of result.address_components) {
-      const types = component.types || [];
+      const types: string[] = component.types || [];
 
-      // Sublocality extraction (Vaishali Nagar, Malviya Nagar, Mansarovar, etc.)
+      // 1. Sublocality (e.g. "Vaishali Nagar", "Malviya Nagar")
       if (!sublocality) {
         if (
           types.includes('sublocality_level_1') ||
           types.includes('sublocality_level_2') ||
-          types.includes('sublocality') ||
-          types.includes('neighborhood')
+          types.includes('sublocality')
         ) {
           sublocality = component.long_name || component.short_name || '';
         }
       }
 
-      // Locality extraction (Jaipur, Mumbai, etc.)
+      // 2. Neighborhood
+      if (!neighborhood) {
+        if (types.includes('neighborhood')) {
+          neighborhood = component.long_name || component.short_name || '';
+        }
+      }
+
+      // 3. Locality (e.g. "Jaipur")
       if (!locality) {
-        if (
-          types.includes('locality') ||
-          types.includes('postal_town') ||
-          types.includes('administrative_area_level_2')
-        ) {
+        if (types.includes('locality') || types.includes('postal_town')) {
           locality = component.long_name || component.short_name || '';
         }
       }
 
-      // State extraction (Rajasthan, Maharashtra, etc.)
+      // 4. District (e.g. "Jaipur District")
+      if (!district) {
+        if (types.includes('administrative_area_level_2') || types.includes('administrative_area_level_3')) {
+          district = component.long_name || component.short_name || '';
+        }
+      }
+
+      // 5. State (e.g. "Rajasthan")
       if (!state) {
         if (types.includes('administrative_area_level_1')) {
           state = component.long_name || component.short_name || '';
         }
       }
 
-      // Country extraction (India)
+      // 6. Country (e.g. "India")
       if (!country) {
         if (types.includes('country')) {
           country = component.long_name || component.short_name || '';
@@ -181,15 +191,18 @@ function parseGoogleGeocodingResults(results: any[]): GeocodingResult {
     }
   }
 
-  // Display Area hierarchy: Sublocality -> Locality -> State
-  const area = sublocality || locality || state || 'Jaipur';
-  const city = locality || sublocality || 'Jaipur';
+  // Locality Priority: sublocality -> neighborhood -> locality
+  const bestLocality = sublocality || neighborhood || locality || district || state || 'Jaipur';
+  const resolvedCity = locality || district || sublocality || 'Jaipur';
   const resolvedState = state || 'Rajasthan';
   const resolvedCountry = country || 'India';
 
   return {
-    area,
-    city,
+    area: bestLocality,
+    sublocality,
+    neighborhood,
+    locality: resolvedCity,
+    district,
     state: resolvedState,
     country: resolvedCountry,
     formattedAddress,
