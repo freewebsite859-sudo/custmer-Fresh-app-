@@ -16,7 +16,7 @@ export const NexoraLeaderboardSection: React.FC<NexoraLeaderboardSectionProps> =
   const [timeframe, setTimeframe] = useState<'weekly' | 'monthly'>('weekly');
   const [showOwnerIncentiveInfo, setShowOwnerIncentiveInfo] = useState<boolean>(false);
 
-  const city = userCity || 'Jaipur';
+  const city = userCity || 'your area';
 
   // Compute Leaderboard Ranking internally based on completed bookings & rating performance.
   // NO monetary figures or revenue data are computed into visible variables or displayed anywhere.
@@ -204,7 +204,7 @@ export const NexoraLeaderboardSection: React.FC<NexoraLeaderboardSectionProps> =
               </h3>
 
               <p className="text-[11px] text-pink-100/90 truncate font-medium mt-0.5 flex items-center gap-1">
-                <span>📍</span> {topSalon.area}, {city}
+                <span>📍</span> {[topSalon.area, topSalon.city || (city !== 'your area' ? city : '')].filter(Boolean).join(', ')}
               </p>
             </div>
           </div>

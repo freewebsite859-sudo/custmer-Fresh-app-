@@ -12,7 +12,7 @@ export const SmartSearchFilterBar: React.FC<SmartSearchFilterBarProps> = ({
   userCity,
   onSelectFilter,
 }) => {
-  const cityDisplayName = userCity || 'Jaipur';
+  const cityDisplayName = userCity || 'your area';
 
   const handleSelectFilter = (filter: 'all' | 'top-rated-city' | 'top-nexora') => {
     const nextFilter = activeFilter === filter ? 'all' : filter;

@@ -9,6 +9,7 @@ import { TopRatedSection } from './TopRatedSection';
 import { NexoraLeaderboardSection } from './NexoraLeaderboardSection';
 import { useCurrentLocation } from '../hooks/useCurrentLocation';
 import { RadiusOption } from '../services/location/locationTypes';
+import { LocationSelectionModal } from './LocationSelectionModal';
 
 interface HomeScreenProps {
   salons: Salon[];
@@ -55,10 +56,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     error: locationError,
     formattedDisplay,
     refreshLocation,
+    setManualLocation,
     filterSalons: filterNearbySalons,
   } = useCurrentLocation(true);
 
   const [nearbyRadius, setNearbyRadius] = useState<RadiusOption>(10);
+  const [isLocationSelectorOpen, setIsLocationSelectorOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [smartFilter, setSmartFilter] = useState<'all' | 'top-rated-city' | 'top-nexora'>('all');
@@ -361,36 +364,45 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           <div className="flex flex-col">
             <span className="text-[12px] font-medium text-[#8c7077]">Location</span>
             <button
-              onClick={() => refreshLocation()}
+              onClick={() => setIsLocationSelectorOpen(true)}
               className="flex items-center gap-1.5 group text-left transition-colors cursor-pointer"
-              title="Tap to detect GPS location"
+              title="Tap to change or detect location"
             >
               <span className="text-[17px] font-semibold text-[#26181c] group-hover:text-[#e6007e]">
                 {formattedDisplay}
               </span>
               <span className={`material-symbols-outlined text-[18px] text-[#e6007e] transition-transform ${isLocationLoading ? 'animate-spin' : 'group-hover:translate-y-0.5'}`}>
-                {isLocationLoading ? 'progress_activity' : 'my_location'}
+                {isLocationLoading ? 'progress_activity' : currentLocation ? 'expand_more' : 'location_searching'}
               </span>
             </button>
           </div>
         </div>
 
-        {/* Location Error / Retry Banner */}
-        {locationError && (
+        {/* Location Error / Retry Banner — shown when GPS/geocoding fails.
+            No hardcoded city fallback; user can Retry or pick an area manually. */}
+        {locationError && !isLocationLoading && (
           <div className="flex items-center justify-between px-3.5 py-2.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 shadow-2xs">
             <div className="flex items-center gap-2 min-w-0 pr-2">
               <span className="material-symbols-outlined text-[18px] text-rose-600 shrink-0">location_off</span>
               <div className="flex flex-col min-w-0">
-                <span className="font-bold text-[12px] truncate">Unable to detect location</span>
+                <span className="font-bold text-[12px] truncate">📍 Location not available</span>
                 <span className="text-[11px] text-rose-700/90 leading-tight">{locationError.message}</span>
               </div>
             </div>
-            <button
-              onClick={() => refreshLocation()}
-              className="px-3 py-1.5 bg-[#e6007e] text-white text-[11px] font-bold rounded-xl shadow-xs hover:bg-[#c9006e] active:scale-95 transition-all cursor-pointer shrink-0"
-            >
-              Tap to retry
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={() => setIsLocationSelectorOpen(true)}
+                className="px-3 py-1.5 bg-white text-rose-700 text-[11px] font-bold rounded-xl border border-rose-200 hover:bg-rose-100 active:scale-95 transition-all cursor-pointer"
+              >
+                Choose area
+              </button>
+              <button
+                onClick={() => refreshLocation()}
+                className="px-3 py-1.5 bg-[#e6007e] text-white text-[11px] font-bold rounded-xl shadow-xs hover:bg-[#c9006e] active:scale-95 transition-all cursor-pointer"
+              >
+                Tap to Retry
+              </button>
+            </div>
           </div>
         )}
 
@@ -429,7 +441,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         {/* Permanent Smart Search Filters */}
         <SmartSearchFilterBar
           activeFilter={smartFilter}
-          userCity={currentLocation?.city || 'Jaipur'}
+          userCity={currentLocation?.city || ''}
           onSelectFilter={setSmartFilter}
         />
       </section>
@@ -680,7 +692,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* 1. ⭐ Top Rated Section */}
       <TopRatedSection
         salons={salons}
-        userCity={currentLocation?.city || 'Jaipur'}
+        userCity={currentLocation?.city || ''}
         favorites={favorites}
         onToggleFavorite={onToggleFavorite}
         onSelectSalon={onSelectSalon}
@@ -689,7 +701,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* 2. 🏆 Top Salon by Nexora Section */}
       <NexoraLeaderboardSection
         salons={salons}
-        userCity={currentLocation?.city || 'Jaipur'}
+        userCity={currentLocation?.city || ''}
         onSelectSalon={onSelectSalon}
       />
 
@@ -1339,6 +1351,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           )}
         </div>
       </section>
+
+      {/* Location Selection Modal — 100+ Jaipur localities */}
+      <LocationSelectionModal
+        isOpen={isLocationSelectorOpen}
+        onClose={() => setIsLocationSelectorOpen(false)}
+        currentArea={currentLocation?.area}
+        onDetectGPS={() => {
+          refreshLocation();
+        }}
+        isDetectingGPS={isLocationLoading}
+        onSelectLocality={(name, coords) => {
+          setManualLocation(name, coords);
+          setIsLocationSelectorOpen(false);
+        }}
+      />
 
       {/* Smart Filter Modal */}
       <AnimatePresence>

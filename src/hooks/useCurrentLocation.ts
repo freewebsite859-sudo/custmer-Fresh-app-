@@ -16,6 +16,7 @@ export interface UseCurrentLocationResult {
   cityName: string;
   formattedDisplay: string;
   refreshLocation: () => Promise<CurrentLocation | null>;
+  setManualLocation: (localityName: string, coords?: { lat: number; lng: number }) => CurrentLocation;
   sortSalons: <T extends { lat?: number; lng?: number; distanceKm?: number; rating?: number; verified?: boolean }>(
     salons: T[]
   ) => Array<T & { distanceKm: number; formattedDistance: string }>;
@@ -71,12 +72,20 @@ export function useCurrentLocation(autoDetect = true): UseCurrentLocationResult 
   const areaName = location?.area || '';
   const cityName = location?.city || '';
 
+  /**
+   * Display string shown in the header location button.
+   * Spec:
+   *  - "📍 Detecting your location..." while loading
+   *  - "📍 Location not available" on failure
+   *  - "📍 <area>, <city>" (or area/city alone) when resolved
+   *  No hardcoded city fallback is ever shown.
+   */
   const formattedDisplay = (() => {
     if (isLoading) {
-      return 'Detecting location...';
+      return '📍 Detecting your location...';
     }
     if (error) {
-      return 'Unable to detect your location';
+      return '📍 Location not available';
     }
     if (location) {
       if (location.area && location.city && location.area !== location.city) {
@@ -88,9 +97,22 @@ export function useCurrentLocation(autoDetect = true): UseCurrentLocationResult 
       if (location.city) {
         return `📍 ${location.city}`;
       }
+      // GPS resolved but geocoding returned no locality — show coordinates.
+      return `📍 ${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`;
     }
-    return 'Location not configured';
+    return '📍 Location not available';
   })();
+
+  const setManualLocation = useCallback(
+    (localityName: string, coords?: { lat: number; lng: number }): CurrentLocation => {
+      const loc = locationService.setManualLocation(localityName, coords);
+      setLocation(loc);
+      setError(null);
+      setIsLoading(false);
+      return loc;
+    },
+    []
+  );
 
   /**
    * Sort salons by:
@@ -166,6 +188,7 @@ export function useCurrentLocation(autoDetect = true): UseCurrentLocationResult 
     cityName,
     formattedDisplay,
     refreshLocation,
+    setManualLocation,
     sortSalons,
     filterSalons,
   };
