@@ -772,15 +772,11 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
                     </div>
                     <div className="flex flex-col">
                       <span className="text-[15px] font-medium text-[#26181c]">{salon.address}</span>
-                      <a
-                        href={`https://maps.google.com/?q=${encodeURIComponent(salon.name + ' ' + salon.address)}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-[13px] text-[#e6007e] font-semibold mt-1 hover:underline flex items-center gap-1"
+                      <span
+                        className="text-[13px] text-[#e6007e] font-semibold mt-1 flex items-center gap-1"
                       >
-                        Get Directions
-                        <span className="material-symbols-outlined text-[14px]">open_in_new</span>
-                      </a>
+                        {salon.address || 'Address details'}
+                      </span>
                     </div>
                   </div>
 
@@ -877,15 +873,13 @@ export const SalonDetailScreen: React.FC<SalonDetailScreenProps> = ({
                     </div>
                     <p className="text-xs font-bold text-[#26181c]">{salon.name}</p>
                     <p className="text-[11px] text-[#5a3f47] max-w-[260px]">{salon.address}</p>
-                    <a
-                      href={`https://maps.google.com/?q=${encodeURIComponent(salon.name + ' ' + salon.address)}`}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => {}}
                       className="mt-1 px-4 py-2 bg-white text-[#e6007e] rounded-xl text-xs font-bold border border-[#fcd5e8] shadow-xs hover:bg-[#e6007e] hover:text-white transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
                     >
-                      Open in Google Maps
-                      <span className="material-symbols-outlined text-[14px]">open_in_new</span>
-                    </a>
+                      Location Details
+                    </button>
                   </div>
                 </div>
               </div>

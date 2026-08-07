@@ -1,16 +1,32 @@
-// Live salon discovery data layer (Phase 1 – Step 2).
+// Live salon discovery data layer
 // Reads ONLY existing anon-readable tables: salons, services, salon_public_websites.
 // No new DB objects. Maps DB rows onto the existing UI `Salon` type.
-// Fields with no real source yet (rating/review counts/distance) are returned
-// as 0 + isNew=true so the UI can show a "New" tag and hide fake badges (D2-approved).
-// Coordinates are resolved from GeoJSON area centroids when available.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { Salon, Service, Staff } from '../types';
 import { BANNER_URL } from '../data/mockData';
-import GeoService from '../services/geoService';
 
 const FETCH_LIMIT = 50;
+
+const AREA_COORDINATES: Record<string, { lat: number; lng: number }> = {
+  'vaishali nagar': { lat: 26.9030, lng: 75.7423 },
+  'c-scheme': { lat: 26.9110, lng: 75.8030 },
+  'civil lines': { lat: 26.9060, lng: 75.7870 },
+  'bani park': { lat: 26.9290, lng: 75.7950 },
+  'malviya nagar': { lat: 26.8530, lng: 75.8170 },
+  'mansarovar': { lat: 26.8550, lng: 75.7660 },
+  'raja park': { lat: 26.8980, lng: 75.8310 },
+  'jhotwara': { lat: 26.9450, lng: 75.7580 },
+  'tonk road': { lat: 26.8750, lng: 75.7950 },
+  'jagatpura': { lat: 26.8220, lng: 75.8640 },
+  'pratap nagar': { lat: 26.8040, lng: 75.8150 },
+  'vidhyadhar nagar': { lat: 26.9600, lng: 75.7820 },
+  'sanganer': { lat: 26.8180, lng: 75.7720 },
+  'shyam nagar': { lat: 26.8920, lng: 75.7660 },
+  'gopalpura': { lat: 26.8740, lng: 75.7830 },
+  'pink city': { lat: 26.9220, lng: 75.8270 },
+  'bapu nagar': { lat: 26.8920, lng: 75.8140 },
+};
 
 interface SalonRow {
   id: string;
@@ -24,6 +40,8 @@ interface SalonRow {
   area: string | null;
   city: string | null;
   state: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 interface ServiceRow {
@@ -107,8 +125,6 @@ export async function fetchPublicSalons(client: SupabaseClient): Promise<Salon[]
     client
       .from('salons')
       .select('id, slug, name, description, business_category, gender_category, phone, address, area, city, state')
-      // Approved/published only — never drafts: owner-approved (verified),
-      // active, not soft-deleted.
       .eq('verified', true)
       .eq('is_active', true)
       .is('deleted_at', null)
@@ -119,7 +135,6 @@ export async function fetchPublicSalons(client: SupabaseClient): Promise<Salon[]
       .eq('is_active', true)
       .eq('is_bookable_online', true)
       .is('deleted_at', null),
-    // Only published public sites count as "live" shops.
     client
       .from('salon_public_websites')
       .select('salon_id, config')
@@ -142,8 +157,6 @@ export async function fetchPublicSalons(client: SupabaseClient): Promise<Salon[]
     siteBySalon.set(row.salon_id, row.config || {});
   }
 
-  // A shop is listed only when it has a published public website row too
-  // (owner approved + published = live). Drafts are never shown.
   const publishedSiteIds = new Set(siteBySalon.keys());
 
   const mappedSalons = ((salonsRes.data || []) as SalonRow[])
@@ -168,19 +181,26 @@ export async function fetchPublicSalons(client: SupabaseClient): Promise<Salon[]
     const prices = services.map((s) => s.price).filter((p) => p > 0);
     const category = row.business_category || 'Salon';
 
+    const areaKey = (row.area || '').toLowerCase().trim();
+    const fallbackCoord = AREA_COORDINATES[areaKey] || { lat: 26.9124, lng: 75.7873 };
+    const lat = typeof row.latitude === 'number' && Number.isFinite(row.latitude) ? row.latitude : fallbackCoord.lat;
+    const lng = typeof row.longitude === 'number' && Number.isFinite(row.longitude) ? row.longitude : fallbackCoord.lng;
+
     return {
       id: row.id,
       name: row.name || 'Salon',
       type: category,
       category,
-      area: row.area || '',
-      city: row.city || '',
-      distanceKm: 0, // no geo source yet — UI hides the distance badge for 0
-      rating: 0, // no ratings source yet — UI shows "New" instead of a fake score
+      area: row.area || 'Jaipur',
+      city: row.city || 'Jaipur',
+      lat,
+      lng,
+      distanceKm: 0,
+      rating: 0,
       reviewCount: 0,
       reviewsCount: 0,
-      verified: true, // filtered above: verified + active + published site only
-      isNew: true, // every live salon is new until a real ratings source exists
+      verified: true,
+      isNew: true,
       image,
       gallery: photos.length > 0 ? photos : [image],
       startingPrice: prices.length > 0 ? Math.min(...prices) : 0,
@@ -199,30 +219,6 @@ export async function fetchPublicSalons(client: SupabaseClient): Promise<Salon[]
       staff,
     } as Salon;
   });
-
-  // Resolve coordinates from GeoJSON area centroids (no API)
-  try {
-    const citySlugs = new Set(mappedSalons.map(s => (s.city || 'jaipur').toLowerCase().trim()));
-    for (const slug of citySlugs) {
-      try { await GeoService.loadCity(slug); } catch {}
-    }
-    for (const salon of mappedSalons) {
-      if (salon.lat && salon.lng) continue;
-      const citySlug = (salon.city || 'jaipur').toLowerCase().trim();
-      const geo = GeoService.get(citySlug);
-      if (!geo) continue;
-      const feature = geo.findByName(salon.area);
-      if (feature) {
-        const ring = feature.geometry.coordinates[0];
-        let sumLng = 0, sumLat = 0;
-        for (const [lng, lat] of ring) { sumLng += lng; sumLat += lat; }
-        salon.lng = sumLng / ring.length;
-        salon.lat = sumLat / ring.length;
-      }
-    }
-  } catch {
-    // GeoJSON resolution is best-effort
-  }
 
   return mappedSalons;
 }

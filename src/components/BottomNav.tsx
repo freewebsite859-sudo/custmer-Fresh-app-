@@ -18,8 +18,6 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     currentScreen === 'welcome' ||
     currentScreen === 'checkout' ||
     currentScreen === 'salon-detail' ||
-    currentScreen === 'location-modal' ||
-    currentScreen === 'location-permission' ||
     currentScreen === 'support' ||
     currentScreen === 'settings' ||
     currentScreen === 'saved-addresses'

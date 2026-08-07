@@ -1,16 +1,16 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Salon, Screen, UserLocation, Booking } from '../types';
+import { Salon, Screen, Booking } from '../types';
 import { BANNER_URL } from '../data/mockData';
 import { SalonCardSkeleton } from './Skeleton';
 import { OfflineDashboardCard } from './OfflineDashboardCard';
 import { SmartSearchFilterBar } from './SmartSearchFilterBar';
 import { TopRatedSection } from './TopRatedSection';
 import { NexoraLeaderboardSection } from './NexoraLeaderboardSection';
-import { filterSalons, quickFilter, FilteredSalon, RadiusOption, FilterResult } from '../services/salonFilter';
+import { useCurrentLocation } from '../hooks/useCurrentLocation';
+import { RadiusOption } from '../services/location/locationTypes';
 
 interface HomeScreenProps {
-  location: UserLocation;
   salons: Salon[];
   salonsLoading?: boolean;
   favorites: string[];
@@ -19,7 +19,7 @@ interface HomeScreenProps {
   onToggleFavorite: (salonId: string) => void;
   onSelectSalon: (salon: Salon) => void;
   onNavigate: (screen: Screen) => void;
-  onOpenLocationSelector: () => void;
+  onOpenLocationSelector?: () => void;
   isAppointmentDismissed?: boolean;
   onDismissAppointment?: () => void;
 }
@@ -37,7 +37,6 @@ const CATEGORY_MAPPING: Record<string, string[]> = {
 };
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
-  location,
   salons,
   salonsLoading = false,
   favorites,
@@ -50,26 +49,29 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   isAppointmentDismissed,
   onDismissAppointment,
 }) => {
+  const {
+    location: currentLocation,
+    isLoading: isLocationLoading,
+    error: locationError,
+    formattedDisplay,
+    refreshLocation,
+    filterSalons: filterNearbySalons,
+  } = useCurrentLocation(true);
+
+  const [nearbyRadius, setNearbyRadius] = useState<RadiusOption>(10);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [smartFilter, setSmartFilter] = useState<'all' | 'top-rated-city' | 'top-nexora'>('all');
-  const [recommendationFilter, setRecommendationFilter] = useState<'all' | 'near' | 'category' | 'top'>('all');
+  const [recommendationFilter, setRecommendationFilter] = useState<'all' | 'category' | 'top'>('all');
   const [topTab, setTopTab] = useState<'frequent' | 'trending'>('frequent');
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading] = useState<boolean>(false);
 
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
-  const [filterRadius, setFilterRadius] = useState<number>(30); // Default to max
   const [sortBy, setSortBy] = useState<string>('Default');
   const [filterArea, setFilterArea] = useState<string>('All');
   const [filterAudience, setFilterAudience] = useState<string>('All');
 
-  // GPS-based salon filtering
-  const [gpsRadius, setGpsRadius] = useState<RadiusOption>(10);
-  const [gpsFilterResult, setGpsFilterResult] = useState<FilterResult | null>(null);
-  const [gpsFilteredSalons, setGpsFilteredSalons] = useState<FilteredSalon[]>([]);
-  
   const popularAreas = ['All', 'Malviya Nagar', 'Vaishali Nagar', 'C-Scheme', 'Raja Park', 'Mansarovar'];
-  const radiusOptions = [2, 5, 10, 15, 20, 25, 30];
   const sortOptions = ['Default', 'Price: Low to High', 'Price: High to Low', 'Highest Rated'];
   const audienceOptions = ['All', 'Unisex', 'Male / Men', 'Female / Women', 'Kids / Children'];
 
@@ -77,29 +79,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     window.scrollTo(0, 0);
   }, []);
 
-  // GPS-based salon filtering (auto-runs when location or salons change)
-  useEffect(() => {
-    if (!location.isGPS || !location.lat || !location.lng || salons.length === 0) {
-      setGpsFilteredSalons([]);
-      setGpsFilterResult(null);
-      return;
-    }
-    let cancelled = false;
-    filterSalons(salons, location.lat, location.lng, location.area, gpsRadius)
-      .then(result => {
-        if (!cancelled) {
-          setGpsFilterResult(result);
-          setGpsFilteredSalons(result.salons);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setGpsFilteredSalons([]);
-          setGpsFilterResult(null);
-        }
-      });
-    return () => { cancelled = true; };
-  }, [location.isGPS, location.lat, location.lng, location.area, salons, gpsRadius]);
+  // Calculate nearby salons sorted by distance
+  const nearbySalonsList = useMemo(() => {
+    if (!currentLocation) return [];
+    return filterNearbySalons(salons, nearbyRadius);
+  }, [currentLocation, salons, nearbyRadius, filterNearbySalons]);
+
   // Scroll container ref for smooth horizontal carousel scrolling
   const carouselRef = React.useRef<HTMLDivElement>(null);
   const recCarouselRef = React.useRef<HTMLDivElement>(null);
@@ -126,14 +111,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     }
   };
 
-  // Past-service preferences come from the server-hydrated bookings prop.
-  // (Pre-unification builds kept a localStorage copy — Supabase is now the
-  // single source of truth, so no local fallback is read here.)
   const userBookings: Booking[] = useMemo(() => {
     return bookings && bookings.length > 0 ? bookings : [];
   }, [bookings]);
 
-  // Analysis Logic Block 1: Frequent Services from User Booking History
+  // Frequent Services from User Booking History
   const frequentServices = useMemo(() => {
     const serviceMap = new Map<
       string,
@@ -170,12 +152,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       });
     });
 
-    const sorted = Array.from(serviceMap.values()).sort((a, b) => b.count - a.count);
+    return Array.from(serviceMap.values()).sort((a, b) => b.count - a.count);
+  }, [userBookings]);
 
-    return sorted;
-  }, [userBookings, salons]);
-
-  // Analysis Logic Block 2: Trending Treatments across local salons
+  // Trending Treatments across salons
   const trendingTreatments = useMemo(() => {
     const list: Array<{
       serviceName: string;
@@ -213,41 +193,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         catCounts[s.category] = (catCounts[s.category] || 0) + 1;
       });
     });
-    // Return sorted categories by frequency
     return Object.keys(catCounts).sort((a, b) => catCounts[b] - catCounts[a]);
   }, [userBookings]);
 
-  // Recommendation Heuristic Engine
+  // Recommendation Engine
   const recommendedSalons = useMemo(() => {
-    const userAreaLower = location.area.toLowerCase();
-    const userCityLower = location.city.toLowerCase();
-
     const scored = salons.map((salon) => {
-      let score = 50; // base score
+      let score = 50;
       const reasons: string[] = [];
 
-      // 1. Location match heuristic
-      const areaMatch = salon.area.toLowerCase().includes(userAreaLower) || userAreaLower.includes(salon.area.toLowerCase());
-      const cityMatch = salon.city.toLowerCase().includes(userCityLower) || userCityLower.includes(salon.city.toLowerCase());
-
-      if (areaMatch) {
-        score += 35;
-        reasons.push(`📍 Near ${salon.area}`);
-      } else if (cityMatch) {
-        score += 20;
-        reasons.push(`📍 In ${salon.city}`);
-      }
-
-      if (salon.distanceKm > 0 && salon.distanceKm <= 1.5) {
-        score += 25;
-        if (!reasons.some((r) => r.startsWith('📍'))) {
-          reasons.push(`📍 Only ${salon.distanceKm} km away`);
-        }
-      } else if (salon.distanceKm > 0 && salon.distanceKm <= 3.0) {
-        score += 15;
-      }
-
-      // 2. Past Service Category Heuristic
+      // 1. Past Service Category Heuristic
       let hasCategoryMatch = false;
       if (preferredCategories.length > 0) {
         const matchesCategory = salon.services.some((s) =>
@@ -260,12 +215,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         }
       }
 
-      // Fallback service tags match
       if (!hasCategoryMatch && salon.tags.length > 0) {
         reasons.push(`✨ Popular for ${salon.tags[0]}`);
       }
 
-      // 2.5 Frequently Viewed Heuristic
+      // 2. Frequently Viewed Heuristic
       if (recentlyViewed.includes(salon.id)) {
         score += 20;
         reasons.push('👁️ Frequently viewed studio');
@@ -280,28 +234,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         score += 10;
       }
 
-      // Clamp percentage match between 86% and 99%
-      const matchPercentage = Math.min(99, Math.max(86, Math.round((score / 150) * 100)));
+      const matchPercentage = Math.min(99, Math.max(86, Math.round((score / 120) * 100)));
 
       return {
         salon,
         score,
         matchPercentage,
-        primaryReason: reasons[0] || `📍 ${salon.area}`,
+        primaryReason: reasons[0] || '✨ Featured on Nexora',
         secondaryReason: reasons[1] || (salon.reviewCount > 0 ? `⭐ ${salon.rating}★ (${salon.reviewCount}+ reviews)` : '✨ New on Nexora'),
-        isLocationMatch: areaMatch || (salon.distanceKm > 0 && salon.distanceKm <= 2.0),
         isCategoryMatch: hasCategoryMatch,
         isTopRated: salon.rating >= 4.8,
       };
     });
 
-    // Sort by match score descending
     scored.sort((a, b) => b.score - a.score);
 
-    // Apply secondary user filter if selected
-    if (recommendationFilter === 'near') {
-      return scored.filter((item) => item.isLocationMatch);
-    }
     if (recommendationFilter === 'category') {
       return scored.filter((item) => item.isCategoryMatch || item.salon.tags.length > 0);
     }
@@ -310,7 +257,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     }
 
     return scored;
-  }, [salons, location, preferredCategories, recommendationFilter, recentlyViewed]);
+  }, [salons, preferredCategories, recommendationFilter, recentlyViewed]);
 
   const categories = [
     { id: 'All', label: 'All', image: 'https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=200&q=80' },
@@ -326,18 +273,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   ];
 
   const filteredSalons = useMemo(() => {
-    // Create a map of recommendation scores for quick lookup during sorting
     const recScoresMap = new Map<string, number>();
     recommendedSalons.forEach(item => {
       recScoresMap.set(item.salon.id, item.score);
     });
 
     return salons.filter((salon) => {
-      // 1. Category Filtering Logic
       const matchesCategory =
         selectedCategory === 'All' ||
         (() => {
-          // Get keywords for the selected category from mapping
           const keywords = CATEGORY_MAPPING[selectedCategory] || [selectedCategory];
           return keywords.some((keyword) => {
             const k = keyword.toLowerCase();
@@ -351,22 +295,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           });
         })();
 
-      // 2. Global Search Logic
       const matchesSearch =
         searchQuery.trim() === '' ||
         (salon.name && salon.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
         (salon.area && salon.area.toLowerCase().includes(searchQuery.toLowerCase())) ||
         (salon.tags && salon.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase())));
 
-      // 3. Location Radius Logic
-      const matchesRadius = salon.distanceKm <= filterRadius;
-
-      // 4. Specific Area Filter
       const matchesArea = filterArea === 'All' || 
         salon.area.toLowerCase().includes(filterArea.toLowerCase()) || 
         filterArea.toLowerCase().includes(salon.area.toLowerCase());
 
-      // 5. Target Audience Filter
       const matchesAudience = filterAudience === 'All' || (() => {
         if (filterAudience === 'Unisex') return salon.genderCategory === 'Unisex';
         if (filterAudience === 'Male / Men') return salon.genderCategory === 'Men Only' || salon.genderCategory === 'Unisex';
@@ -375,9 +313,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         return true;
       })();
 
-      return matchesCategory && matchesSearch && matchesRadius && matchesArea && matchesAudience;
+      return matchesCategory && matchesSearch && matchesArea && matchesAudience;
     }).sort((a, b) => {
-      // Smart Filter Priority Overrides
       if (smartFilter === 'top-rated-city') {
         if (b.rating !== a.rating) return b.rating - a.rating;
         const aRev = a.verifiedReviewsCount || a.reviewCount || 0;
@@ -392,31 +329,25 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         return b.rating - a.rating;
       }
 
-      // Priority 0: Manual Sort Overrides (If user explicitly chooses a sort method)
       if (sortBy === 'Price: Low to High') return a.startingPrice - b.startingPrice;
       if (sortBy === 'Price: High to Low') return b.startingPrice - a.startingPrice;
       if (sortBy === 'Highest Rated') return b.rating - a.rating;
 
-      // Priority 1: Favorites
       const aFav = favorites.includes(a.id) ? 1 : 0;
       const bFav = favorites.includes(b.id) ? 1 : 0;
       if (aFav !== bFav) return bFav - aFav;
 
-      // Priority 2: Previously Visited / Booked Services
       const aBooked = userBookings.some(bk => bk.salonId === a.id) ? 1 : 0;
       const bBooked = userBookings.some(bk => bk.salonId === b.id) ? 1 : 0;
       if (aBooked !== bBooked) return bBooked - aBooked;
 
-      // Priority 3: Recommended Score (from recommendation engine)
       const aScore = recScoresMap.get(a.id) || 0;
       const bScore = recScoresMap.get(b.id) || 0;
       if (aScore !== bScore) return bScore - aScore;
 
-      // Priority 4: Default fallback (Rating and then Distance)
-      if (b.rating !== a.rating) return b.rating - a.rating;
-      return a.distanceKm - b.distanceKm;
+      return b.rating - a.rating;
     });
-  }, [salons, selectedCategory, searchQuery, smartFilter, filterRadius, filterArea, filterAudience, sortBy, favorites, userBookings, recommendedSalons]);
+  }, [salons, selectedCategory, searchQuery, smartFilter, filterArea, filterAudience, sortBy, favorites, userBookings, recommendedSalons]);
 
   const nextBooking = useMemo(() => {
     return userBookings.find(b => b.status === 'CONFIRMED' || b.status === 'PENDING');
@@ -428,20 +359,40 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       <section className="flex flex-col gap-3.5">
         <div className="flex items-center justify-between">
           <div className="flex flex-col">
-            <span className="text-[12px] font-medium text-[#8c7077]">Current Location</span>
+            <span className="text-[12px] font-medium text-[#8c7077]">Location</span>
             <button
-              onClick={onOpenLocationSelector}
+              onClick={() => refreshLocation()}
               className="flex items-center gap-1.5 group text-left transition-colors cursor-pointer"
+              title="Tap to detect GPS location"
             >
               <span className="text-[17px] font-semibold text-[#26181c] group-hover:text-[#e6007e]">
-                {location.area}
+                {formattedDisplay}
               </span>
-              <span className="material-symbols-outlined text-[18px] text-[#e6007e] transition-transform group-hover:translate-y-0.5">
-                expand_more
+              <span className={`material-symbols-outlined text-[18px] text-[#e6007e] transition-transform ${isLocationLoading ? 'animate-spin' : 'group-hover:translate-y-0.5'}`}>
+                {isLocationLoading ? 'progress_activity' : 'my_location'}
               </span>
             </button>
           </div>
         </div>
+
+        {/* Location Error / Retry Banner */}
+        {locationError && (
+          <div className="flex items-center justify-between px-3.5 py-2.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 shadow-2xs">
+            <div className="flex items-center gap-2 min-w-0 pr-2">
+              <span className="material-symbols-outlined text-[18px] text-rose-600 shrink-0">location_off</span>
+              <div className="flex flex-col min-w-0">
+                <span className="font-bold text-[12px] truncate">Unable to detect location</span>
+                <span className="text-[11px] text-rose-700/90 leading-tight">{locationError.message}</span>
+              </div>
+            </div>
+            <button
+              onClick={() => refreshLocation()}
+              className="px-3 py-1.5 bg-[#e6007e] text-white text-[11px] font-bold rounded-xl shadow-xs hover:bg-[#c9006e] active:scale-95 transition-all cursor-pointer shrink-0"
+            >
+              Tap to retry
+            </button>
+          </div>
+        )}
 
         {/* Search Bar */}
         <div className="relative w-full shadow-xs rounded-2xl overflow-hidden">
@@ -468,7 +419,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               className="absolute inset-y-0 right-2 flex items-center p-2 text-[#e6007e] rounded-full hover:bg-[#fde7f3] transition-colors cursor-pointer"
             >
               <span className="material-symbols-outlined text-[22px]">tune</span>
-              {(filterRadius < 30 || sortBy !== 'Default' || filterArea !== 'All' || filterAudience !== 'All') && (
+              {(sortBy !== 'Default' || filterArea !== 'All' || filterAudience !== 'All') && (
                 <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white"></span>
               )}
             </button>
@@ -478,74 +429,58 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         {/* Permanent Smart Search Filters */}
         <SmartSearchFilterBar
           activeFilter={smartFilter}
-          userCity={location.city || 'Jaipur'}
+          userCity={currentLocation?.city || 'Jaipur'}
           onSelectFilter={setSmartFilter}
         />
       </section>
 
-      {/* GPS-Based Nearby Salons Section */}
-      {location.isGPS && location.lat && location.lng && (
+      {/* GPS Nearby Salons Section (Calculates distances using Haversine & sorts nearest first) */}
+      {currentLocation && (
         <section className="flex flex-col gap-3">
-          {/* Radius Selector */}
           <div className="flex items-center justify-between">
-            <h2 className="text-[15px] font-bold text-[#26181c] flex items-center gap-2">
+            <div className="flex items-center gap-2">
               <span className="w-1 h-5 bg-[#e6007e] rounded-full" />
-              Nearby Salons
-              {gpsFilterResult && (
-                <span className="text-[11px] font-medium text-[#8c7077] ml-1">
-                  ({gpsFilterResult.withinRadius} found)
-                </span>
-              )}
-            </h2>
+              <h2 className="text-[16px] font-bold text-[#26181c]">Nearby Salons</h2>
+              <span className="text-[11px] font-bold text-[#8c7077] bg-[#f8eff3] px-2 py-0.5 rounded-full">
+                {nearbySalonsList.length} found
+              </span>
+            </div>
+
+            {/* Radius Filters */}
             <div className="flex items-center gap-1 bg-[#f8eff3] p-1 rounded-xl">
-              {([2, 5, 10] as RadiusOption[]).map(r => (
+              {([2, 5, 10, 'all'] as RadiusOption[]).map((r) => (
                 <button
-                  key={r}
-                  onClick={() => setGpsRadius(r)}
-                  className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                    gpsRadius === r
-                      ? 'bg-[#e6007e] text-white shadow-sm'
+                  key={String(r)}
+                  onClick={() => setNearbyRadius(r)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    nearbyRadius === r
+                      ? 'bg-[#e6007e] text-white shadow-xs'
                       : 'text-[#5a3f47] hover:text-[#e6007e]'
                   }`}
                 >
-                  {r} km
+                  {r === 'all' ? 'All' : `Within ${r} km`}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* GPS Filter Stats */}
-          {gpsFilterResult && (
-            <div className="flex items-center gap-3 px-3 py-2 bg-[#fff0f2] rounded-xl border border-[#fde7f3]">
-              <div className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-                <span className="text-[10px] font-bold text-green-700">
-                  📍 {location.area}
-                </span>
-              </div>
-              <span className="text-[10px] text-[#8c7077]">•</span>
-              <span className="text-[10px] text-[#8c7077]">
-                {gpsFilterResult.inSameArea} in your area
-              </span>
-              <span className="text-[10px] text-[#8c7077]">•</span>
-              <span className="text-[10px] text-[#8c7077]">
-                {gpsFilterResult.withinRadius} within {gpsRadius}km
+          {/* Current GPS Accuracy Pill */}
+          <div className="flex items-center justify-between px-3 py-1.5 bg-[#fff0f2] rounded-xl border border-[#fde7f3] text-[11px]">
+            <div className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+              <span className="font-bold text-emerald-800">
+                📍 {currentLocation.area || currentLocation.city}
               </span>
             </div>
-          )}
+            <span className="text-[#8c7077]">
+              Sorted nearest first (Haversine)
+            </span>
+          </div>
 
-          {/* Loading State */}
-          {gpsFilteredSalons.length === 0 && !gpsFilterResult && salons.length > 0 && (
-            <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 rounded-xl">
-              <span className="material-symbols-outlined animate-spin text-[16px] text-blue-500">progress_activity</span>
-              <span className="text-[12px] text-blue-600 font-medium">Finding salons near you...</span>
-            </div>
-          )}
-
-          {/* GPS-Filtered Salon Cards */}
-          {gpsFilteredSalons.length > 0 && (
-            <div className="flex flex-col gap-4">
-              {gpsFilteredSalons.slice(0, 10).map((salon) => {
+          {/* Nearby Salon Cards */}
+          {nearbySalonsList.length > 0 ? (
+            <div className="flex flex-col gap-3.5">
+              {nearbySalonsList.slice(0, 6).map((salon) => {
                 const isFav = favorites.includes(salon.id);
                 return (
                   <motion.div
@@ -553,81 +488,67 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     layout
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="flex flex-col bg-white rounded-[20px] shadow-[0_4px_24px_rgba(0,0,0,0.04)] overflow-hidden hover:shadow-[0_8px_32px_rgba(0,0,0,0.08)] transition-shadow duration-300 group"
+                    className="flex flex-col bg-white rounded-2xl shadow-xs border border-[#f0d8e2] overflow-hidden hover:shadow-md transition-shadow group"
                   >
-                    {/* Salon Image */}
                     <div
-                      className="relative w-full h-[180px] cursor-pointer overflow-hidden"
+                      className="relative w-full h-36 cursor-pointer overflow-hidden"
                       onClick={() => onSelectSalon(salon)}
                     >
                       <img
                         src={salon.image}
                         alt={salon.name}
-                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       />
                       {/* Distance Badge */}
-                      <div className="absolute top-3 left-3 flex gap-2">
-                        <div className="bg-[#e6007e]/90 backdrop-blur-sm px-2.5 py-1 rounded-lg flex items-center gap-1 shadow-sm">
-                          <span className="material-symbols-outlined text-[14px] text-white">near_me</span>
-                          <span className="text-[12px] text-white font-bold">
-                            {salon.computedDistanceKm < 1
-                              ? `${Math.round(salon.computedDistanceKm * 1000)}m`
-                              : `${salon.computedDistanceKm.toFixed(1)}km`}
-                          </span>
-                        </div>
-                        {salon.isSameArea && (
-                          <div className="bg-green-500/90 backdrop-blur-sm px-2 py-1 rounded-lg shadow-sm">
-                            <span className="text-[11px] text-white font-bold">📍 Your Area</span>
-                          </div>
-                        )}
+                      <div className="absolute top-3 left-3 bg-[#e6007e] text-white text-[11px] font-extrabold px-2.5 py-1 rounded-full shadow-md flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[13px]">near_me</span>
+                        {salon.formattedDistance || `${salon.distanceKm} km`}
                       </div>
-                      {/* Favorite Toggle */}
+
+                      {/* Favorite Button */}
                       <button
-                        onClick={(e) => { e.stopPropagation(); onToggleFavorite(salon.id); }}
-                        className="absolute top-3 right-3 w-8 h-8 bg-white/90 backdrop-blur-sm rounded-full flex items-center justify-center text-[#8c7077] hover:text-[#e6007e] transition-colors"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onToggleFavorite(salon.id);
+                        }}
+                        className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/90 backdrop-blur-xs flex items-center justify-center text-[#8c7077] hover:text-[#e6007e] transition-colors"
                       >
-                        <span className={`material-symbols-outlined text-[18px] ${isFav ? 'text-[#e6007e] fill-current' : ''}`}>favorite</span>
+                        <span className={`material-symbols-outlined text-[18px] ${isFav ? 'text-[#e6007e] fill-current' : ''}`}>
+                          favorite
+                        </span>
                       </button>
                     </div>
 
-                    {/* Card Content */}
-                    <div className="p-4 flex flex-col gap-2">
+                    <div className="p-3.5 flex flex-col gap-2">
                       <div className="flex justify-between items-start gap-2">
                         <div>
-                          <h3 className="text-[16px] text-[#26181c] font-semibold line-clamp-1 cursor-pointer hover:text-[#e6007e] transition-colors" onClick={() => onSelectSalon(salon)}>
+                          <h3
+                            onClick={() => onSelectSalon(salon)}
+                            className="text-[16px] font-bold text-[#26181c] cursor-pointer hover:text-[#e6007e] transition-colors line-clamp-1"
+                          >
                             {salon.name}
                           </h3>
-                          <p className="text-[13px] text-[#5a3f47] flex items-center gap-1 mt-0.5">
-                            <span className="material-symbols-outlined text-[15px] text-[#e6007e]">location_on</span>
+                          <p className="text-[12px] text-[#5a3f47] flex items-center gap-1 mt-0.5">
+                            <span className="material-symbols-outlined text-[14px] text-[#e6007e]">location_on</span>
                             {salon.area}
                           </p>
                         </div>
+
                         {salon.rating > 0 && (
-                          <div className="flex items-center gap-1 bg-[#ffe8ed] py-1 px-2 rounded-lg shrink-0">
+                          <div className="flex items-center gap-1 bg-[#ffe8ed] px-2 py-0.5 rounded-lg shrink-0">
                             <span className="material-symbols-outlined text-[14px] text-amber-500">star</span>
-                            <span className="text-[12px] text-[#26181c] font-bold">{salon.rating}</span>
+                            <span className="text-[12px] font-bold text-[#26181c]">{salon.rating}</span>
                           </div>
                         )}
                       </div>
 
-                      {/* Tags */}
-                      <div className="flex flex-wrap gap-1.5">
-                        {salon.tags.slice(0, 3).map((tag) => (
-                          <span key={tag} className="px-2 py-0.5 bg-[#f6dce2] text-[#26181c] text-[11px] font-medium rounded-full">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-
-                      {/* Pricing & Action */}
-                      <div className="flex items-center justify-between mt-1 pt-3 border-t border-[#fce2e7]">
-                        <div>
-                          <span className="text-[11px] text-[#8c7077] font-bold">Services from</span>
-                          <span className="text-[16px] font-bold text-[#26181c] block">₹{salon.startingPrice}</span>
-                        </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-[#fce2e7]">
+                        <span className="text-[12px] font-extrabold text-[#26181c]">
+                          From ₹{salon.startingPrice}
+                        </span>
                         <button
                           onClick={() => onSelectSalon(salon)}
-                          className="h-9 px-5 bg-[#8e004b] text-white text-[12px] font-semibold rounded-xl hover:bg-[#e6007e] active:scale-95 transition-all shadow-sm cursor-pointer"
+                          className="px-4 py-1.5 bg-[#8e004b] hover:bg-[#e6007e] text-white text-[12px] font-bold rounded-xl transition-all active:scale-95 cursor-pointer shadow-2xs"
                         >
                           Book
                         </button>
@@ -637,20 +558,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 );
               })}
             </div>
-          )}
-
-          {/* No GPS Results */}
-          {gpsFilterResult && gpsFilteredSalons.length === 0 && (
-            <div className="text-center py-8 bg-white rounded-2xl border border-[#e8e8e8]">
+          ) : (
+            <div className="p-6 bg-white rounded-2xl border border-slate-200 text-center flex flex-col items-center gap-2">
               <span className="material-symbols-outlined text-[32px] text-[#e0bec6]">location_off</span>
-              <p className="text-[13px] font-semibold text-[#8c7077] mt-2">
-                No salons found within {gpsRadius}km
-              </p>
+              <p className="text-[13px] font-bold text-[#26181c]">No salons found within {nearbyRadius} km</p>
               <button
-                onClick={() => setGpsRadius(10)}
-                className="mt-3 px-4 py-2 bg-[#e6007e] text-white text-[12px] font-bold rounded-xl cursor-pointer"
+                onClick={() => setNearbyRadius('all')}
+                className="mt-1 px-4 py-1.5 bg-[#e6007e] text-white text-xs font-bold rounded-xl cursor-pointer"
               >
-                Expand to 10km
+                Show All Salons
               </button>
             </div>
           )}
@@ -761,10 +677,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </button>
       </section>
 
-      {/* 1. ⭐ Top Rated in [City] Section */}
+      {/* 1. ⭐ Top Rated Section */}
       <TopRatedSection
         salons={salons}
-        userCity={location.city || 'Jaipur'}
+        userCity={currentLocation?.city || 'Jaipur'}
         favorites={favorites}
         onToggleFavorite={onToggleFavorite}
         onSelectSalon={onSelectSalon}
@@ -773,13 +689,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* 2. 🏆 Top Salon by Nexora Section */}
       <NexoraLeaderboardSection
         salons={salons}
-        userCity={location.city || 'Jaipur'}
+        userCity={currentLocation?.city || 'Jaipur'}
         onSelectSalon={onSelectSalon}
       />
 
-      {/* Frequent Services & Trending Treatments Section (Booking History Analysis) */}
+      {/* Frequent Services & Trending Treatments Section */}
       <section className="flex flex-col gap-3.5 bg-white p-4 sm:p-5 rounded-[28px] border border-[#f0d8e2] shadow-xs">
-        {/* Section Header & Tab Switcher */}
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -795,7 +710,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <p className="text-[11px] text-[#5a3f47]">
                   {topTab === 'frequent'
                     ? 'Analyzed from your booking history for 1-click rebooking'
-                    : 'Top rated treatments near you'}
+                    : 'Top rated treatments'}
                 </p>
               </div>
             </div>
@@ -805,7 +720,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             </span>
           </div>
 
-          {/* Switcher Pills & Scroll Controls */}
           <div className="flex items-center justify-between gap-2 mt-1">
             <div className="flex flex-1 bg-[#f8eff3] p-1 pr-1 pb-[7px] rounded-2xl gap-1">
               <button
@@ -832,7 +746,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               </button>
             </div>
 
-            {/* Quick Scroll Navigation Arrows */}
             <div className="flex items-center gap-1 shrink-0">
               <button
                 onClick={() => handleScrollCarousel('left')}
@@ -852,7 +765,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </div>
         </div>
 
-        {/* Horizontal Cards Carousel with Motion Animation & Staggered Entrance */}
+        {/* Horizontal Cards Carousel */}
         <AnimatePresence mode="wait">
           {topTab === 'frequent' ? (
             <motion.div
@@ -968,7 +881,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <div className="w-full shrink-0 flex flex-col items-center justify-center text-center py-8 px-6 gap-2">
                   <span className="material-symbols-outlined text-[28px] text-[#e0bec6]">trending_up</span>
                   <p className="text-[13px] font-semibold text-[#8c7077] leading-5">
-                    Trending services will appear here once salons near you gather customer ratings.
+                    Trending services will appear here once salons gather customer ratings.
                   </p>
                 </div>
               )}
@@ -1052,9 +965,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
       </section>
 
-      {/* Recommended For You Section (Heuristic AI Personalization) */}
+      {/* Recommended For You Section */}
       <section className="flex flex-col gap-3.5 bg-gradient-to-b from-[#fff2f6] to-white p-4 sm:p-5 rounded-[28px] border border-[#f8d3e2] shadow-xs">
-        {/* Section Header */}
         <div className="flex flex-col gap-1">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -1064,7 +976,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               <div>
                 <h2 className="text-[18px] font-extrabold text-[#26181c] tracking-tight">Recommended For You</h2>
                 <p className="text-[11px] text-[#5a3f47]">
-                  Tailored based on <strong className="text-[#e6007e]">{location.area}</strong> proximity & service history
+                  Tailored based on your preferred services & ratings
                 </p>
               </div>
             </div>
@@ -1074,7 +986,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 Smart Pick
               </span>
 
-              {/* Scroll Controls */}
               <button
                 onClick={() => handleScrollRecCarousel('left')}
                 title="Scroll left"
@@ -1092,7 +1003,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             </div>
           </div>
 
-          {/* Heuristic Filter Switcher */}
           <div className="flex items-center gap-1.5 overflow-x-auto pt-2 pb-1 scrollbar-none">
             <button
               onClick={() => setRecommendationFilter('all')}
@@ -1103,16 +1013,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               }`}
             >
               ✨ Best Match
-            </button>
-            <button
-              onClick={() => setRecommendationFilter('near')}
-              className={`px-3 py-1.5 rounded-full text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
-                recommendationFilter === 'near'
-                  ? 'bg-[#e6007e] text-white shadow-xs'
-                  : 'bg-white text-[#5a3f47] border border-[#f0d8e2] hover:bg-[#fff0f3]'
-              }`}
-            >
-              📍 Nearby ({location.area.split(',')[0]})
             </button>
             <button
               onClick={() => setRecommendationFilter('category')}
@@ -1137,7 +1037,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </div>
         </div>
 
-        {/* Recommended Salons Horizontal Scrollable Deck with Motion */}
         <AnimatePresence mode="wait">
           <motion.div
             ref={recCarouselRef}
@@ -1179,7 +1078,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   className="min-w-[280px] max-w-[290px] bg-white rounded-2xl border border-[#f0d8e2] overflow-hidden hover:border-[#f0a8c8] transition-colors cursor-pointer group flex flex-col justify-between shrink-0 select-none snap-start"
                 >
                   <div>
-                    {/* Image & Match Badge Header */}
                     <div className="relative h-36 w-full overflow-hidden bg-slate-100">
                       <img
                         src={salon.image}
@@ -1187,13 +1085,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       />
 
-                      {/* Match Score Badge */}
                       <div className="absolute top-3 left-3 bg-[#e6007e] text-white text-[10px] font-extrabold px-2.5 py-1 rounded-full shadow-md flex items-center gap-1 border border-white/20">
                         <span className="material-symbols-outlined text-[12px]">auto_awesome</span>
                         {matchPercentage}% Match
                       </div>
 
-                      {/* Favorite Button */}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -1207,13 +1103,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         </span>
                       </button>
 
-                      {/* Reason Tag Pill overlay at bottom of image */}
                       <div className="absolute bottom-2 left-3 right-3 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] text-white font-medium truncate flex items-center gap-1">
                         <span>{primaryReason}</span>
                       </div>
                     </div>
 
-                    {/* Card Content */}
                     <div className="p-3.5 flex flex-col gap-2">
                       <div className="flex items-start justify-between gap-1">
                         <div>
@@ -1221,8 +1115,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                             {salon.name}
                           </h3>
                           <p className="text-[11px] text-[#5a3f47] flex items-center gap-1 mt-0.5">
-                            <span className="material-symbols-outlined text-[13px] text-[#e6007e]">location_on</span>
-                            {salon.area}{salon.distanceKm > 0 ? ` • ${salon.distanceKm} km` : ''}
+                            <span className="material-symbols-outlined text-[13px] text-[#e6007e]">store</span>
+                            {salon.area || salon.city || 'Salon'}
                           </p>
                         </div>
 
@@ -1252,7 +1146,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     </div>
                   </div>
 
-                  {/* Footer Action */}
                   <div className="px-3.5 pb-3.5 pt-1 flex items-center justify-between border-t border-[#f7e8ef] mt-1">
                     <div>
                       <span className="text-[9px] text-[#8c7077] block">Starts at</span>
@@ -1316,7 +1209,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                           alt={salon.name}
                           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                         />
-                        {/* Badges */}
                         <div className="absolute top-4 left-4 flex gap-2">
                           {salon.verified && (
                             <div className="bg-white/90 backdrop-blur-sm px-2.5 py-1 rounded-lg flex items-center gap-1 shadow-sm">
@@ -1331,7 +1223,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                           )}
                         </div>
 
-                        {/* Favorite Toggle */}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1363,7 +1254,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                             <p className="text-[14px] text-[#5a3f47] flex items-center gap-1 mt-0.5">
                               <span className="material-symbols-outlined text-[16px] text-[#e6007e]">location_on</span>
                               <span className="truncate">
-                                {salon.distanceKm > 0 ? `${salon.distanceKm} km • ` : ''}{salon.area}
+                                {salon.area || salon.city || 'Salon'}
                               </span>
                             </p>
                           </div>
@@ -1383,7 +1274,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                           </div>
                         </div>
 
-                        {/* Tags */}
                         <div className="flex flex-wrap gap-1.5">
                           {salon.tags.map((tag) => (
                             <span
@@ -1395,7 +1285,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                           ))}
                         </div>
 
-                        {/* Pricing & Action */}
                         <div className="flex items-center justify-between mt-1 pt-3 border-t border-[#fce2e7] w-full">
                           <div className="flex flex-col">
                             <span className="text-[12px] text-[#8c7077] font-bold">Services from</span>
@@ -1436,7 +1325,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                       setSelectedCategory('All');
                       setSearchQuery('');
                       setSmartFilter('all');
-                      setFilterRadius(30);
                       setSortBy('Default');
                       setFilterArea('All');
                       setFilterAudience('All');
@@ -1482,7 +1370,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               <div className="p-4 flex-1 overflow-y-auto space-y-5">
                 {/* Area Filter */}
                 <div>
-                  <h4 className="text-[14px] font-bold text-[#26181c] mb-3">Popular Areas (Jaipur)</h4>
+                  <h4 className="text-[14px] font-bold text-[#26181c] mb-3">Popular Areas</h4>
                   <div className="flex flex-wrap gap-2">
                     {popularAreas.map(area => (
                       <button
@@ -1520,29 +1408,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   </div>
                 </div>
 
-                {/* Distance Filter */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-[14px] font-bold text-[#26181c]">Distance Radius</h4>
-                    <span className="text-[13px] font-semibold text-[#e6007e]">Up to {filterRadius} km</span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {radiusOptions.map(r => (
-                      <button
-                        key={r}
-                        onClick={() => setFilterRadius(r)}
-                        className={`px-3 py-1.5 rounded-full text-[13px] font-semibold transition-all cursor-pointer ${
-                          filterRadius === r
-                            ? 'bg-[#e6007e] text-white shadow-md'
-                            : 'bg-[#fcf9f8] text-[#5a3f47] border border-[#e8e8e8] hover:border-[#e6007e]/30'
-                        }`}
-                      >
-                        {r} km
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
                 {/* Sort Filter */}
                 <div>
                   <h4 className="text-[14px] font-bold text-[#26181c] mb-3">Sort By</h4>
@@ -1569,7 +1434,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               <div className="p-4 border-t border-[#e8e8e8] flex gap-3 bg-white">
                 <button
                   onClick={() => {
-                    setFilterRadius(30);
                     setSortBy('Default');
                     setFilterArea('All');
                     setFilterAudience('All');

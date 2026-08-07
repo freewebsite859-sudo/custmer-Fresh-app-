@@ -1,4 +1,4 @@
-import { UserLocation } from '../types';
+import { CurrentLocation } from '../services/location/locationTypes';
 
 export const LOGO_URL = '/src/assets/images/nexora_logo_luxury_1785236781115.jpg';
 export const LOGO_SQUARE = '/src/assets/images/nexora_logo_luxury_1785236781115.jpg';
@@ -7,8 +7,14 @@ export const BANNER_URL = 'https://lh3.googleusercontent.com/aida-public/AB6AXuC
 export const LOCATION_PIN_URL = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCtvEyTkpLk9SfuFRowvBqe-LhfEaeJ4EN4EXFd2Jc4epPo3YNlLbrCphpf9KpbhCEo0tsRiMt2-1LeI-aXpINydWYomtYhZ_s1zEU4_AGYyiqCtk1zJvASOlrf7CbLPbRWNym2I7xXzeM-w6pIL5VEEhVwlX95f-PcuCRpVNHVCvvHXsG52VAnkK095w5oeD5Wo9ZB4e5GUZLI5RJBDKOLyEmXcddMzaB4lS4EpnFyKDwgDmALTaggwDYycO1gyubVkSMblxtSVxU';
 export const WELCOME_BG_URL = 'https://lh3.googleusercontent.com/aida-public/AB6AXuDGlC0y_Xz7ws9fBk2enobNYh_8MeOC3_im9Vw1YDOlIopdHcUPp2vnWjDM9eJQVHfp81c_JtHXfmlRhS-QG1F2I5kvPJzHrcpVvurCwHS2KkFxHWBSSRgkYpdI47_fPMvqmFv75zYI3NQFSsYIcdc6dCZ8-7lBaTl4or6AswOuZ4_rBqfdADrYNchiUpNjt9KAZSdAcZrJjDAxo9Rv8hz2NouIh23-guUR9ZMazmHiio7YoqW-Gd_gEAcOcNW8ThyembA8056Yr2k';
 
-export const INITIAL_LOCATION: UserLocation = {
+export const INITIAL_LOCATION: CurrentLocation = {
+  latitude: 26.9124,
+  longitude: 75.7873,
+  area: 'Location not configured',
   city: 'Jaipur',
-  area: 'North Jaipur > Jhotwara',
-  isGPS: false,
+  state: 'Rajasthan',
+  country: 'India',
+  formattedAddress: 'Jaipur, Rajasthan',
+  accuracy: 0,
+  timestamp: 0,
 };
