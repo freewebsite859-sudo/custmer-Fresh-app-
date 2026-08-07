@@ -311,18 +311,30 @@ class LocationService {
   }
 
   /**
-   * Force refresh — emergency fallback using getCurrentPosition with same validation
+   * Wait for the active native watchPosition stream to provide a usable fix.
+   * A separate getCurrentPosition request can race with the watcher and is
+   * frequently blocked by mobile browsers after the permission prompt.
    */
   async forceRefresh(): Promise<AcceptedLocation | null> {
-    try {
-      const pos = await gpsWatcher.getCurrentPositionOnce();
-      this.handlePosition(pos);
-      return this.getLocation();
-    } catch (e) {
-      const info = handleGpsError(e, 'forceRefresh');
-      this.emitStatus(info.message as LocationStatusMessage, info.code === 'PERMISSION_DENIED');
-      return this.getLocation();
-    }
+    await this.start();
+
+    const current = this.getLocation();
+    if (current?.source === 'gps') return current;
+
+    return new Promise((resolve) => {
+      let unsubscribe: (() => void) | undefined;
+      const timeout = window.setTimeout(() => {
+        unsubscribe?.();
+        resolve(this.getLocation());
+      }, 16_000);
+
+      unsubscribe = this.subscribe((location) => {
+        if (location?.source !== 'gps') return;
+        window.clearTimeout(timeout);
+        unsubscribe?.();
+        resolve(location);
+      });
+    });
   }
 
   getUpdateCount(): number {

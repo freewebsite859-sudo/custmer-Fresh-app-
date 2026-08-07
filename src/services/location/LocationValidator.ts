@@ -87,15 +87,11 @@ export class LocationValidator {
       return { accept: false, reason: 'Stale timestamp', statusMessage: 'Waiting for better GPS accuracy...' };
     }
 
-    // 3. Ignore first reading (stabilization)
+    // 3. Mark the first reading as seen. Do not discard a precise first fix:
+    // on many mobile browsers watchPosition only delivers one fix initially, so
+    // rejecting it made the “Use My Current Location” action fail every time.
     if (this.isFirstReading) {
       this.isFirstReading = false;
-      // Store fair pending if needed but still reject first
-      if (pos.accuracy > this.config.goodThreshold && pos.accuracy <= this.config.fairThreshold) {
-        this.pendingFair = pos;
-        this.pendingFairSince = Date.now();
-      }
-      return { accept: false, reason: 'Initial reading ignored - stabilizing', statusMessage: 'Detecting your location...' };
     }
 
     // 4. Duplicate check (very small movement vs last accepted)
