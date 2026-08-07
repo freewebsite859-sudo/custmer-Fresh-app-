@@ -124,7 +124,7 @@ export async function fetchPublicSalons(client: SupabaseClient): Promise<Salon[]
   const [salonsRes, servicesRes, sitesRes] = await Promise.all([
     client
       .from('salons')
-      .select('id, slug, name, description, business_category, gender_category, phone, address, area, city, state')
+      .select('id, slug, name, description, business_category, gender_category, phone, address, area, city, state, latitude, longitude')
       .eq('verified', true)
       .eq('is_active', true)
       .is('deleted_at', null)

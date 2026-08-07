@@ -12,6 +12,7 @@ export interface CurrentLocation {
   formattedAddress: string;
   accuracy: number;        // Accuracy in meters
   timestamp: number;       // Detection timestamp in epoch ms
+  source?: 'gps' | 'manual'; // How the location was resolved
 }
 
 export type LocationErrorType =

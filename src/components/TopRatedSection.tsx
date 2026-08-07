@@ -17,16 +17,21 @@ export const TopRatedSection: React.FC<TopRatedSectionProps> = ({
   onToggleFavorite,
   onSelectSalon,
 }) => {
-  const city = userCity || 'Jaipur';
+  // No hardcoded city fallback: when the user's city is unknown we show
+  // "your area" labels and consider all salons (distance sorting handles
+  // relevance via the Nearby section).
+  const city = userCity || 'your area';
 
   // Filter & Sort Criteria:
-  // 1. Salons matching city (or fallback to all if city has < 1 salon)
+  // 1. Salons matching city (or fallback to all if city has < 1 salon / unknown)
   // 2. Minimum review threshold (e.g. verified reviews >= 10)
   // 3. Sorted by: Rating DESC -> Verified Review Count DESC -> Recent Activity DESC
   const topRatedSalons = React.useMemo(() => {
-    let citySalons = salons.filter(
-      (s) => s.city.toLowerCase() === city.toLowerCase() || s.area.toLowerCase().includes(city.toLowerCase())
-    );
+    let citySalons = city && city !== 'your area'
+      ? salons.filter(
+          (s) => s.city.toLowerCase() === city.toLowerCase() || s.area.toLowerCase().includes(city.toLowerCase())
+        )
+      : [...salons];
 
     if (citySalons.length === 0) {
       citySalons = [...salons]; // Fallback to all if no exact city matches

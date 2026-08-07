@@ -191,11 +191,14 @@ function parseGoogleGeocodingResults(results: any[]): GeocodingResult {
     }
   }
 
-  // Locality Priority: sublocality -> neighborhood -> locality
-  const bestLocality = sublocality || neighborhood || locality || district || state || 'Jaipur';
-  const resolvedCity = locality || district || sublocality || 'Jaipur';
-  const resolvedState = state || 'Rajasthan';
-  const resolvedCountry = country || 'India';
+  // Locality Priority: sublocality -> neighborhood -> locality -> district -> state.
+  // NOTE: We intentionally do NOT hardcode "Jaipur"/"Rajasthan"/"India" here.
+  // When Google cannot resolve a component it stays empty so the UI can
+  // clearly distinguish a real geocoded locality from a guess.
+  const bestLocality = sublocality || neighborhood || locality || district || state || '';
+  const resolvedCity = locality || district || sublocality || '';
+  const resolvedState = state || '';
+  const resolvedCountry = country || '';
 
   return {
     area: bestLocality,

@@ -1,12 +1,20 @@
 /**
  * LocationService — Production GPS detection and location management.
  * Coordinates navigator.geolocation and Google Geocoding API.
+ *
+ * Design rules (per product spec):
+ *  - Uses navigator.geolocation.getCurrentPosition with enableHighAccuracy.
+ *  - Reverse-geocodes via Google Geocoding API using VITE_GOOGLE_MAPS_API_KEY.
+ *  - NEVER falls back to a hardcoded city (e.g. "Jaipur"). On geocoding failure
+ *    the resolved GPS coordinates are surfaced but no fake locality is invented.
  */
 
 import { CurrentLocation, LocationError } from './locationTypes';
 import { GoogleGeocoder } from './GoogleGeocoder';
+import { findLocalityCoordinates } from '../../data/jaipurLocalities';
 
 const STORAGE_KEY = 'nexora_current_location';
+const MANUAL_SOURCE = 'manual';
 
 const GPS_OPTIONS: PositionOptions = {
   enableHighAccuracy: true,
@@ -105,40 +113,49 @@ class LocationService {
       const position = await this.getBrowserPosition();
       const { latitude, longitude, accuracy } = position.coords;
 
-      // 2. Reverse geocode via Google Geocoding API
+      // 2. Reverse geocode via Google Geocoding API.
+      //    If the API key is missing, network fails, or Google returns an
+      //    error, we DO NOT invent a hardcoded city. We surface the raw
+      //    coordinates as the formatted address and leave locality blank.
       let geocoded;
       try {
         geocoded = await GoogleGeocoder.reverseGeocode(latitude, longitude);
       } catch (geoErr: any) {
         console.warn('Google geocoding notice:', geoErr?.message || geoErr);
+        const coordsLabel = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
         geocoded = {
-          area: 'Jaipur',
+          area: '',
           sublocality: '',
           neighborhood: '',
-          locality: 'Jaipur',
-          district: 'Jaipur',
-          state: 'Rajasthan',
-          country: 'India',
-          formattedAddress: `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
+          locality: '',
+          district: '',
+          state: '',
+          country: '',
+          formattedAddress: coordsLabel,
         };
       }
 
-      // 3. Assemble CurrentLocation object
+      // 3. Assemble CurrentLocation object. Best locality follows the
+      //    priority sublocality -> neighborhood -> locality. Empty strings
+      //    remain empty (no "Jaipur" hardcoding).
+      const bestArea = geocoded.area || geocoded.sublocality || geocoded.neighborhood || geocoded.locality || '';
+
       const location: CurrentLocation = {
         latitude,
         longitude,
-        area: geocoded.area || 'Jaipur',
+        area: bestArea,
         sublocality: geocoded.sublocality || undefined,
         neighborhood: geocoded.neighborhood || undefined,
-        locality: geocoded.locality || 'Jaipur',
+        locality: geocoded.locality || undefined,
         district: geocoded.district || undefined,
-        city: geocoded.locality || 'Jaipur',
-        state: geocoded.state || 'Rajasthan',
-        country: geocoded.country || 'India',
+        city: geocoded.locality || '',
+        state: geocoded.state || '',
+        country: geocoded.country || '',
         formattedAddress: geocoded.formattedAddress || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
         accuracy: Math.round(accuracy || 0),
         timestamp: position.timestamp || Date.now(),
-      };
+        source: 'gps',
+      } as CurrentLocation;
 
       this.currentLocation = location;
       this.currentError = null;
@@ -153,6 +170,48 @@ class LocationService {
     } finally {
       this.isDetecting = false;
     }
+  }
+
+  /**
+   * Sets the location manually from the LocationSelectionModal (one of the
+   * 100+ Jaipur localities). This is an explicit user choice and does not
+   * rely on any hardcoded default — the chosen locality's coordinates come
+   * from the curated localities dataset.
+   */
+  public setManualLocation(localityName: string, coords?: { lat: number; lng: number }): CurrentLocation {
+    const resolved = coords || findLocalityCoordinates(localityName);
+    if (!resolved) {
+      const err: LocationError = {
+        type: 'POSITION_UNAVAILABLE',
+        message: `Coordinates not available for "${localityName}".`,
+      };
+      this.currentError = err;
+      this.emit();
+      throw err;
+    }
+
+    const location: CurrentLocation = {
+      latitude: resolved.lat,
+      longitude: resolved.lng,
+      area: localityName,
+      sublocality: localityName,
+      neighborhood: undefined,
+      locality: 'Jaipur',
+      district: 'Jaipur',
+      city: 'Jaipur',
+      state: 'Rajasthan',
+      country: 'India',
+      formattedAddress: `${localityName}, Jaipur, Rajasthan, India`,
+      accuracy: 0,
+      timestamp: Date.now(),
+      source: MANUAL_SOURCE,
+    } as CurrentLocation;
+
+    this.currentLocation = location;
+    this.currentError = null;
+    this.saveToStorage(location);
+    this.emit();
+    return location;
   }
 
   private getBrowserPosition(): Promise<GeolocationPosition> {
