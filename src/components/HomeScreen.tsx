@@ -7,7 +7,8 @@ import { OfflineDashboardCard } from './OfflineDashboardCard';
 import { SmartSearchFilterBar } from './SmartSearchFilterBar';
 import { TopRatedSection } from './TopRatedSection';
 import { NexoraLeaderboardSection } from './NexoraLeaderboardSection';
-import { useCurrentLocation } from '../hooks/useCurrentLocation';
+import { useGpsLocation } from '../hooks/useGpsLocation';
+import { filterSalons, RadiusOption, FilterResult } from '../services/salonFilter';
 import { RadiusOption } from '../services/location/locationTypes';
 import { LocationSelectionModal } from './LocationSelectionModal';
 
@@ -51,18 +52,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onDismissAppointment,
 }) => {
   const {
-    location: currentLocation,
+    location: gpsState,
     isLoading: isLocationLoading,
-    error: locationError,
-    formattedDisplay,
-    hasResolvedLocality,
-    refreshLocation,
-    retryGeocoding,
-    setManualLocation,
-    filterSalons: filterNearbySalons,
-  } = useCurrentLocation(true);
+    permissionDenied: gpsPermissionDenied,
+    needsManual: gpsNeedsManual,
+    setManual: gpsSetManual,
+    forceRefresh: gpsForceRefresh,
+  } = useGpsLocation();
 
   const [nearbyRadius, setNearbyRadius] = useState<RadiusOption>(10);
+  const [gpsFilterResult, setGpsFilterResult] = useState<FilterResult | null>(null);
+  const [gpsFilteredSalons, setGpsFilteredSalons] = useState<any[]>([]);
   const [isLocationSelectorOpen, setIsLocationSelectorOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -84,11 +84,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     window.scrollTo(0, 0);
   }, []);
 
-  // Calculate nearby salons sorted by distance
-  const nearbySalonsList = useMemo(() => {
-    if (!currentLocation) return [];
-    return filterNearbySalons(salons, nearbyRadius);
-  }, [currentLocation, salons, nearbyRadius, filterNearbySalons]);
+  // Calculate nearby salons sorted by distance using GeoJSON
+  const [nearbySalonsList, setNearbySalonsList] = useState<any[]>([]);
+  useEffect(() => {
+    if (!gpsState?.lat || !gpsState?.lng || salons.length === 0) {
+      setNearbySalonsList([]);
+      return;
+    }
+    let cancelled = false;
+    filterSalons(salons, gpsState.lat, gpsState.lng, gpsState.area || '', nearbyRadius)
+      .then(result => {
+        if (!cancelled) setNearbySalonsList(result.salons);
+      })
+      .catch(() => { if (!cancelled) setNearbySalonsList([]); });
+    return () => { cancelled = true; };
+  }, [gpsState?.lat, gpsState?.lng, gpsState?.area, salons, nearbyRadius]);
 
   // Scroll container ref for smooth horizontal carousel scrolling
   const carouselRef = React.useRef<HTMLDivElement>(null);
@@ -372,16 +382,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             >
               <span className="flex flex-col min-w-0">
                 <span className="text-[17px] font-semibold text-[#26181c] group-hover:text-[#e6007e] truncate leading-tight">
-                  {formattedDisplay}
+                  {(gpsState?.area || "Detecting...")}
                 </span>
-                {hasResolvedLocality && currentLocation?.city && currentLocation.area !== currentLocation.city && (
+                {(gpsState?.area ? true : false) && gpsState?.city && gpsState?.area !== gpsState?.city && (
                   <span className="text-[12px] font-medium text-[#8c7077] truncate leading-tight">
-                    {currentLocation.city}
+                    {gpsState?.city}
                   </span>
                 )}
               </span>
               <span className={`material-symbols-outlined text-[18px] text-[#e6007e] transition-transform shrink-0 ${isLocationLoading ? 'animate-spin' : 'group-hover:translate-y-0.5'}`}>
-                {isLocationLoading ? 'progress_activity' : currentLocation ? 'expand_more' : 'location_searching'}
+                {isLocationLoading ? 'progress_activity' : gpsState ? 'expand_more' : 'location_searching'}
               </span>
             </button>
           </div>
@@ -390,13 +400,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         {/* Location Error / Retry Banner — shown when GPS/geocoding fails.
             No hardcoded city fallback; user can Retry (re-runs geocoding
             without re-prompting for GPS permission) or pick an area manually. */}
-        {locationError && !isLocationLoading && (
+        {null && !isLocationLoading && (
           <div className="flex items-center justify-between px-3.5 py-2.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 shadow-2xs">
             <div className="flex items-center gap-2 min-w-0 pr-2">
               <span className="material-symbols-outlined text-[18px] text-rose-600 shrink-0">location_off</span>
               <div className="flex flex-col min-w-0">
                 <span className="font-bold text-[12px] truncate">📍 Location not available</span>
-                <span className="text-[11px] text-rose-700/90 leading-tight break-words">{locationError.message}</span>
+                <span className="text-[11px] text-rose-700/90 leading-tight break-words">{null.message}</span>
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
@@ -410,10 +420,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 onClick={() => {
                   // If we already have GPS coords, retry only geocoding;
                   // otherwise re-run full detection.
-                  if (currentLocation) {
-                    retryGeocoding();
+                  if (gpsState) {
+                    gpsForceRefresh();
                   } else {
-                    refreshLocation();
+                    gpsForceRefresh();
                   }
                 }}
                 className="px-3 py-1.5 bg-[#e6007e] text-white text-[11px] font-bold rounded-xl shadow-xs hover:bg-[#c9006e] active:scale-95 transition-all cursor-pointer"
@@ -459,13 +469,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         {/* Permanent Smart Search Filters */}
         <SmartSearchFilterBar
           activeFilter={smartFilter}
-          userCity={currentLocation?.city || ''}
+          userCity={gpsState?.city || ''}
           onSelectFilter={setSmartFilter}
         />
       </section>
 
       {/* GPS Nearby Salons Section (Calculates distances using Haversine & sorts nearest first) */}
-      {currentLocation && (
+      {gpsState && (
         <section className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -499,7 +509,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             <div className="flex items-center gap-1.5 min-w-0">
               <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
               <span className="font-bold text-emerald-800 truncate">
-                📍 {hasResolvedLocality ? (currentLocation.area || currentLocation.city) : 'Near you'}
+                📍 {(gpsState?.area ? true : false) ? (gpsState?.area || gpsState?.city) : 'Near you'}
               </span>
             </div>
             <span className="text-[#8c7077] shrink-0 ml-2">
@@ -710,7 +720,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* 1. ⭐ Top Rated Section */}
       <TopRatedSection
         salons={salons}
-        userCity={currentLocation?.city || ''}
+        userCity={gpsState?.city || ''}
         favorites={favorites}
         onToggleFavorite={onToggleFavorite}
         onSelectSalon={onSelectSalon}
@@ -719,7 +729,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* 2. 🏆 Top Salon by Nexora Section */}
       <NexoraLeaderboardSection
         salons={salons}
-        userCity={currentLocation?.city || ''}
+        userCity={gpsState?.city || ''}
         onSelectSalon={onSelectSalon}
       />
 
@@ -1374,13 +1384,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       <LocationSelectionModal
         isOpen={isLocationSelectorOpen}
         onClose={() => setIsLocationSelectorOpen(false)}
-        currentArea={currentLocation?.area}
+        currentArea={gpsState?.area}
         onDetectGPS={() => {
-          refreshLocation();
+          gpsForceRefresh();
         }}
         isDetectingGPS={isLocationLoading}
         onSelectLocality={(name, coords) => {
-          setManualLocation(name, coords);
+          gpsSetManual(name, "", "");
           setIsLocationSelectorOpen(false);
         }}
       />
