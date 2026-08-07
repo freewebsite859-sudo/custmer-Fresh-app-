@@ -43,14 +43,12 @@ export const BookingDetailsModal: React.FC<BookingDetailsModalProps> = ({
   };
 
   const handleDirections = () => {
-    const query = encodeURIComponent(`${booking.salonName}, ${booking.locationArea}`);
-    window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_blank');
+    triggerToast('Location navigation will be available in the upcoming update.');
   };
 
   const handleCall = () => {
     triggerToast(`Connecting to ${booking.salonName} front desk...`);
   };
-
 
   const getStatusBadge = (status: string) => {
     switch (status) {

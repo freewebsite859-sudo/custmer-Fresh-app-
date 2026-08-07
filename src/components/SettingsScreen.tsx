@@ -16,33 +16,22 @@ interface SettingsScreenProps {
   onNavigate: (screen: any) => void;
   onLogout?: () => void;
   customerId?: string;
-  currentLocationName?: string;
 }
 
 export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   profile,
-  onBack,
   onNavigate,
   onLogout,
   customerId,
-  currentLocationName,
 }) => {
   const [settings, setSettings] = useState<CustomerSettings>(SETTINGS_DEFAULTS);
-  const [cloudReady, setCloudReady] = useState(false);
 
   const {
     booking_updates: bookingUpdates,
     appointment_reminders: appointmentReminders,
-    rewards_updates: rewardsUpdates,
-    offers_promotions: offersPromo,
-    email_notifications: emailNotifs,
-    push_notifications: pushNotifs,
-    auto_location: useLocAuto,
-    language,
-    display_mode: displayMode,
   } = settings;
 
-  const preferredLoc = currentLocationName?.trim() || profile?.preferred_area || 'Jaipur';
+  const preferredLoc = profile?.preferred_area || 'Location not configured';
 
   const [toast, setToast] = useState<string | null>(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -60,7 +49,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       .then(({ settings: loaded }) => {
         if (active) {
           setSettings(loaded);
-          setCloudReady(true);
         }
       })
       .catch((e) => console.warn('Settings load notice:', e?.message || e));
@@ -90,14 +78,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     applySettings({ ...settings, [field]: !current }, `${label} is now ${!current ? 'enabled' : 'disabled'}`);
   };
 
-  const handleLanguageChange = (lang: string) => {
-    applySettings({ ...settings, language: lang }, lang === 'english' ? 'Language set to English' : 'भाषा हिन्दी में बदली गई');
-  };
-
-  const handleDisplayChange = (mode: CustomerSettings['display_mode']) => {
-    applySettings({ ...settings, display_mode: mode }, mode === 'device' ? 'Theme matched to Device' : 'Theme updated');
-  };
-
   const handleInstallApp = () => setShowInstallModal(true);
 
   const handleLogOutConfirm = () => {
@@ -120,7 +100,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       )}
 
       {showInstallModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs"><div className="absolute inset-0" onClick={() => setShowInstallModal(false)} /><div className="relative z-10 w-full max-w-sm"><InstallApp onClose={() => setShowInstallModal(false)} onInstall={async () => false /* no browser prompt here — guide will show */} /></div></div>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs"><div className="absolute inset-0" onClick={() => setShowInstallModal(false)} /><div className="relative z-10 w-full max-w-sm"><InstallApp onClose={() => setShowInstallModal(false)} onInstall={async () => false} /></div></div>
       )}
 
       <div className="flex flex-col w-full pb-safe px-4 pt-4">
@@ -133,7 +113,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
         <div className="text-caption text-on-surface-variant uppercase tracking-wider mb-2 ml-2">Location</div>
         <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden mb-6">
-          <button type="button" onClick={() => onNavigate('location-modal')} className="w-full flex items-center justify-between p-4 text-left hover:bg-slate-50 transition-colors"><div><span className="block text-body font-medium">Preferred Location</span><span className="block text-caption text-[#e6007e] font-bold mt-0.5">{preferredLoc}</span></div><span className="material-symbols-outlined text-outline">chevron_right</span></button>
+          <div className="w-full flex items-center justify-between p-4 text-left"><div><span className="block text-body font-medium">Preferred Location</span><span className="block text-caption text-[#e6007e] font-bold mt-0.5">{preferredLoc}</span></div></div>
         </div>
 
         <div className="text-caption text-on-surface-variant uppercase tracking-wider mb-2 ml-2">App Info</div>

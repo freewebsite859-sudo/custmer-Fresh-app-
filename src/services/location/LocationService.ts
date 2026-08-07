@@ -1,350 +1,246 @@
 /**
- * LocationService — Central orchestrator (production-ready)
- *
- * Uses ONLY navigator.geolocation.watchPosition with { enableHighAccuracy:true, timeout:15000, maximumAge:0 }
- * Implements intelligent GPS validation, 100m movement threshold, Permission handling,
- * continuous tracking, and comprehensive logging.
- *
- * Single responsibility orchestrator delegating to modular services.
+ * LocationService — Production GPS detection and location management.
+ * Coordinates navigator.geolocation and Google Geocoding API.
  */
 
-import { gpsWatcher } from './GpsWatcher';
-import { LocationValidator, RawPosition } from './LocationValidator';
-import { PermissionManager } from './PermissionManager';
-import { locationStore, AcceptedLocation, LocationStatusMessage } from './LocationStore';
-import { haversineMeters } from './DistanceCalculator';
-import Logger from './Logger';
-import { handleGpsError } from './ErrorHandler';
+import { CurrentLocation, LocationError, LocationErrorType } from './locationTypes';
+import { GoogleGeocoder } from './GoogleGeocoder';
 
-export type LocationUpdateListener = (loc: AcceptedLocation | null) => void;
+const STORAGE_KEY = 'nexora_current_location';
+
+const GPS_OPTIONS: PositionOptions = {
+  enableHighAccuracy: true,
+  timeout: 20000,
+  maximumAge: 0,
+};
+
+type LocationSubscriber = (location: CurrentLocation | null, error: LocationError | null) => void;
 
 class LocationService {
-  private validator = new LocationValidator();
-  private permissionManager = new PermissionManager();
-  private updateCount = 0;
-  private permissionState: string = 'prompt';
-  private lastAcceptedLocation: AcceptedLocation | null = null;
-  private fairTimer: number | null = null;
-  private listeners = new Set<LocationUpdateListener>();
-  private started = false;
-  private isOnlineHandlerBound = false;
-
-  // Thresholds per spec
-  private readonly MOVE_THRESHOLD_M = 100;
+  private currentLocation: CurrentLocation | null = null;
+  private currentError: LocationError | null = null;
+  private isDetecting = false;
+  private subscribers = new Set<LocationSubscriber>();
 
   constructor() {
-    // Load persisted location
-    this.lastAcceptedLocation = locationStore.getLocation();
-    if (this.lastAcceptedLocation) {
-      this.validator.setLastAccepted({
-        lat: this.lastAcceptedLocation.lat,
-        lng: this.lastAcceptedLocation.lng,
-        accuracy: this.lastAcceptedLocation.accuracy,
-        timestamp: this.lastAcceptedLocation.timestamp,
-        speed: this.lastAcceptedLocation.speed,
-        heading: this.lastAcceptedLocation.heading,
-      });
-    }
+    this.hydrateFromStorage();
   }
 
   /**
-   * Start GPS tracking — call once on app mount.
-   * Idempotent.
+   * Hydrates initial location from localStorage cache if available.
    */
-  async start(): Promise<void> {
-    if (this.started) return;
-    this.started = true;
-
-    // Query permission
+  private hydrateFromStorage(): void {
     try {
-      this.permissionState = await this.permissionManager.query();
-      if (this.permissionState === 'denied') {
-        this.emitStatus('Please enable location to discover nearby salons.', true);
-      } else {
-        this.emitStatus('Detecting your location...', false);
-      }
-      this.permissionManager.subscribe((s) => {
-        this.permissionState = s;
-        if (s === 'denied') {
-          this.emitStatus('Please enable location to discover nearby salons.', true);
-        } else if (s === 'granted') {
-          this.emitStatus('Detecting your location...', false);
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && Number.isFinite(parsed.latitude) && Number.isFinite(parsed.longitude)) {
+          this.currentLocation = parsed;
         }
-      });
-    } catch {}
+      }
+    } catch {
+      // Storage unavailable or corrupted
+    }
+  }
 
-    // Check if geolocation supported
+  /**
+   * Returns the current cached location, if any.
+   */
+  public getLocation(): CurrentLocation | null {
+    return this.currentLocation;
+  }
+
+  /**
+   * Returns the last location error, if any.
+   */
+  public getError(): LocationError | null {
+    return this.currentError;
+  }
+
+  /**
+   * Subscribes to location updates and errors. Returns an unsubscribe function.
+   */
+  public subscribe(subscriber: LocationSubscriber): () => void {
+    this.subscribers.add(subscriber);
+    // Initial emit
+    subscriber(this.currentLocation, this.currentError);
+    return () => {
+      this.subscribers.delete(subscriber);
+    };
+  }
+
+  private emit(): void {
+    for (const sub of this.subscribers) {
+      try {
+        sub(this.currentLocation, this.currentError);
+      } catch (e) {
+        console.warn('Location subscriber notice:', e);
+      }
+    }
+  }
+
+  /**
+   * Detects the user's current GPS location using native browser geolocation
+   * and converts coordinates to a human-readable area via Google Geocoding.
+   */
+  public async detectLocation(forceRefresh = false): Promise<CurrentLocation> {
+    if (this.isDetecting) {
+      // Return existing cached or wait
+      if (this.currentLocation && !forceRefresh) {
+        return this.currentLocation;
+      }
+    }
+
     if (!('geolocation' in navigator)) {
-      Logger.error('Geolocation API not supported');
-      this.emitStatus('Please enable location to discover nearby salons.', true);
-      return;
+      const err: LocationError = {
+        type: 'POSITION_UNAVAILABLE',
+        message: 'Geolocation is not supported by your browser or device.',
+      };
+      this.currentError = err;
+      this.emit();
+      throw err;
     }
 
-    // Check offline
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      Logger.warn('Device offline - GPS may be unavailable');
-      // Still start watcher; it may work offline via GPS hardware
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      const err: LocationError = {
+        type: 'OFFLINE',
+        message: 'No internet connection. Please check your network to detect location.',
+      };
+      this.currentError = err;
+      this.emit();
+      throw err;
     }
 
-    // Start watcher
-    gpsWatcher.start(
-      (pos) => this.handlePosition(pos),
-      (err) => this.handleError(err),
-    );
+    this.isDetecting = true;
+    this.currentError = null;
 
-    // Timer for pending fair accuracy acceptance after 10s
-    this.fairTimer = window.setInterval(() => {
-      const pending = this.validator.checkPendingFairTimeout();
-      if (pending) {
-        Logger.info('Fair accuracy timeout - accepting pending location', { accuracy: pending.accuracy });
-        this.acceptLocation(pending, `Fair accuracy ${Math.round(pending.accuracy)}m after 10s wait`);
+    try {
+      // 1. Get high accuracy GPS coordinates
+      const position = await this.getBrowserPosition();
+      const { latitude, longitude, accuracy } = position.coords;
+
+      // 2. Reverse geocode via Google Geocoding API
+      let geocoded;
+      try {
+        geocoded = await GoogleGeocoder.reverseGeocode(latitude, longitude);
+      } catch (geoErr: any) {
+        // If Google Geocoding failed (e.g. key missing in dev), provide graceful fallback
+        console.warn('Google geocoding notice:', geoErr?.message || geoErr);
+        geocoded = {
+          area: 'Jaipur',
+          city: 'Jaipur',
+          state: 'Rajasthan',
+          country: 'India',
+          formattedAddress: `GPS: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
+        };
       }
-    }, 1000);
 
-    // Handle online/offline events
-    if (!this.isOnlineHandlerBound) {
-      window.addEventListener('offline', () => {
-        Logger.warn('Device went offline');
-        this.emitStatus('GPS signal is weak...', false);
-      });
-      window.addEventListener('online', () => {
-        Logger.info('Device back online');
-        this.emitStatus('Detecting your location...', false);
-      });
-      this.isOnlineHandlerBound = true;
-    }
+      // 3. Assemble CurrentLocation object
+      const location: CurrentLocation = {
+        latitude,
+        longitude,
+        area: geocoded.area || geocoded.city || 'Jaipur',
+        city: geocoded.city || 'Jaipur',
+        state: geocoded.state || 'Rajasthan',
+        country: geocoded.country || 'India',
+        formattedAddress: geocoded.formattedAddress || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
+        accuracy: Math.round(accuracy || 0),
+        timestamp: position.timestamp || Date.now(),
+      };
 
-    Logger.info('LocationService started', { provider: 'Browser / HTML5 Geolocation' });
-  }
-
-  stop(): void {
-    gpsWatcher.stop();
-    if (this.fairTimer !== null) {
-      clearInterval(this.fairTimer);
-      this.fairTimer = null;
-    }
-    this.started = false;
-    Logger.info('LocationService stopped');
-  }
-
-  destroy(): void {
-    this.stop();
-    this.listeners.clear();
-    this.permissionManager.destroy();
-    this.validator.reset();
-  }
-
-  private handlePosition(pos: GeolocationPosition): void {
-    this.updateCount++;
-
-    const raw: RawPosition = {
-      lat: pos.coords.latitude,
-      lng: pos.coords.longitude,
-      accuracy: pos.coords.accuracy,
-      timestamp: pos.timestamp,
-      speed: pos.coords.speed ?? null,
-      heading: pos.coords.heading ?? null,
-    };
-
-    Logger.debug(`Raw GPS reading #${this.updateCount}`, {
-      lat: raw.lat,
-      lng: raw.lng,
-      accuracy: raw.accuracy,
-      timestamp: raw.timestamp,
-    });
-
-    // Validate
-    const decision = this.validator.validate(raw);
-
-    if (!decision.accept) {
-      Logger.gpsUpdate({
-        count: this.updateCount,
-        lat: raw.lat,
-        lng: raw.lng,
-        accuracy: raw.accuracy,
-        timestamp: raw.timestamp,
-        speed: raw.speed,
-        heading: raw.heading,
-        permission: this.permissionState,
-        accepted: false,
-        reason: decision.reason,
-      });
-      // Update status message
-      this.emitStatus((decision as { accept: false; reason: string; statusMessage: string }).statusMessage as LocationStatusMessage, false);
-      return;
-    }
-
-    // Accepted — but check 100m movement threshold for existing accepted location
-    if (this.lastAcceptedLocation) {
-      const moved = haversineMeters(raw.lat, raw.lng, this.lastAcceptedLocation.lat, this.lastAcceptedLocation.lng);
-      if (moved < this.MOVE_THRESHOLD_M) {
-        Logger.gpsUpdate({
-          count: this.updateCount,
-          lat: raw.lat,
-          lng: raw.lng,
-          accuracy: raw.accuracy,
-          timestamp: raw.timestamp,
-          speed: raw.speed,
-          heading: raw.heading,
-          permission: this.permissionState,
-          accepted: false,
-          reason: `Movement ${Math.round(moved)}m < ${this.MOVE_THRESHOLD_M}m threshold - ignored`,
-        });
-        // Do not update store, but emit "Location updated." if we have location
-        this.emitStatus('Location updated.', false);
-        return;
-      }
-      // Movement >=100m -> will recalculate
-      this.acceptLocation(raw, decision.reason, moved);
-    } else {
-      // First accepted fix
-      this.acceptLocation(raw, decision.reason, undefined);
-    }
-  }
-
-  private acceptLocation(raw: RawPosition, reason: string, movementDistance?: number): void {
-    const accepted: AcceptedLocation = {
-      lat: raw.lat,
-      lng: raw.lng,
-      accuracy: raw.accuracy,
-      timestamp: raw.timestamp,
-      speed: raw.speed,
-      heading: raw.heading,
-      source: 'gps',
-      city: 'Jaipur',
-    };
-
-    // Preserve area/zone from previous if any until geocoded via GeoService
-    if (this.lastAcceptedLocation?.area) accepted.area = this.lastAcceptedLocation.area;
-
-    this.lastAcceptedLocation = accepted;
-    this.validator.setLastAccepted(raw);
-    locationStore.setLocation(accepted);
-    this.emitStatus('Location updated.', false);
-
-    // Notify listeners; they can decide to recalc salons
-    const shouldRecalc = typeof movementDistance === 'number' ? movementDistance >= this.MOVE_THRESHOLD_M : true;
-
-    Logger.gpsUpdate({
-      count: this.updateCount,
-      lat: raw.lat,
-      lng: raw.lng,
-      accuracy: raw.accuracy,
-      timestamp: raw.timestamp,
-      speed: raw.speed,
-      heading: raw.heading,
-      permission: this.permissionState,
-      accepted: true,
-      reason,
-      movementDistance,
-      recalculating: shouldRecalc && typeof movementDistance === 'number',
-    });
-
-    for (const cb of this.listeners) {
-      try { cb({ ...accepted }); } catch (e) { Logger.error('Listener error', { error: String(e) }); }
-    }
-  }
-
-  private handleError(err: GeolocationPositionError): void {
-    const info = handleGpsError(err, 'watchPosition');
-    Logger.error(`GPS Error: ${info.message}`, { devMessage: info.devMessage, code: info.code });
-
-    if (info.code === 'PERMISSION_DENIED') {
-      this.emitStatus('Please enable location to discover nearby salons.', true);
-      // Do not stop watcher; user may grant later
-      return;
-    }
-    if (info.code === 'POSITION_UNAVAILABLE' || info.code === 'TIMEOUT') {
-      this.emitStatus(info.message as LocationStatusMessage, false);
-      return;
-    }
-    this.emitStatus(info.message as LocationStatusMessage, false);
-  }
-
-  private emitStatus(msg: LocationStatusMessage, permissionDenied: boolean) {
-    locationStore.setStatus(msg, permissionDenied);
-  }
-
-  // Public API
-  getLocation(): AcceptedLocation | null {
-    return locationStore.getLocation();
-  }
-
-  getStatus(): { message: LocationStatusMessage; permissionDenied: boolean } {
-    return locationStore.getStatus();
-  }
-
-  subscribe(listener: LocationUpdateListener): () => void {
-    this.listeners.add(listener);
-    // Immediately emit last known if exists
-    const cur = this.getLocation();
-    if (cur) listener({ ...cur });
-    return () => this.listeners.delete(listener);
-  }
-
-  subscribeStatus(cb: (msg: LocationStatusMessage, denied: boolean) => void): () => void {
-    return locationStore.subscribeStatus(cb);
-  }
-
-  /**
-   * Manual location selection (when permission denied or user picks)
-   */
-  setManualLocation(area: string, zone: string, pincode: string): void {
-    const loc: AcceptedLocation = {
-      lat: this.lastAcceptedLocation?.lat ?? 0,
-      lng: this.lastAcceptedLocation?.lng ?? 0,
-      accuracy: 0,
-      timestamp: Date.now(),
-      speed: null,
-      heading: null,
-      area,
-      zone,
-      pincode,
-      city: 'Jaipur',
-      source: 'manual',
-    };
-    this.lastAcceptedLocation = loc;
-    locationStore.setLocation(loc);
-    for (const cb of this.listeners) {
-      try { cb({ ...loc }); } catch {}
+      this.currentLocation = location;
+      this.currentError = null;
+      this.saveToStorage(location);
+      this.emit();
+      return location;
+    } catch (error: any) {
+      const handled = this.mapGeolocationError(error);
+      this.currentError = handled;
+      this.emit();
+      throw handled;
+    } finally {
+      this.isDetecting = false;
     }
   }
 
   /**
-   * Wait for the active native watchPosition stream to provide a usable fix.
-   * A separate getCurrentPosition request can race with the watcher and is
-   * frequently blocked by mobile browsers after the permission prompt.
+   * Promisified navigator.geolocation.getCurrentPosition with spec-compliant options.
    */
-  async forceRefresh(): Promise<AcceptedLocation | null> {
-    await this.start();
-
-    const current = this.getLocation();
-    if (current?.source === 'gps') return current;
-
-    return new Promise((resolve) => {
-      let unsubscribe: (() => void) | undefined;
-      const timeout = window.setTimeout(() => {
-        unsubscribe?.();
-        resolve(this.getLocation());
-      }, 16_000);
-
-      unsubscribe = this.subscribe((location) => {
-        if (location?.source !== 'gps') return;
-        window.clearTimeout(timeout);
-        unsubscribe?.();
-        resolve(location);
-      });
+  private getBrowserPosition(): Promise<GeolocationPosition> {
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, GPS_OPTIONS);
     });
   }
 
-  getUpdateCount(): number {
-    return this.updateCount;
+  /**
+   * Maps native GeolocationPositionError or exceptions into friendly LocationError.
+   */
+  private mapGeolocationError(err: any): LocationError {
+    if (err && err.type) {
+      return err as LocationError;
+    }
+
+    if (typeof err === 'object' && 'code' in err) {
+      const code = (err as GeolocationPositionError).code;
+      switch (code) {
+        case 1: // PERMISSION_DENIED
+          return {
+            type: 'PERMISSION_DENIED',
+            code: 1,
+            message: 'Location access was denied. Please allow location permissions in your browser or device settings.',
+            originalError: err,
+          };
+        case 2: // POSITION_UNAVAILABLE
+          return {
+            type: 'POSITION_UNAVAILABLE',
+            code: 2,
+            message: 'Unable to acquire your GPS position. Please make sure location/GPS is enabled on your device.',
+            originalError: err,
+          };
+        case 3: // TIMEOUT
+          return {
+            type: 'TIMEOUT',
+            code: 3,
+            message: 'Location request timed out. Please tap to retry.',
+            originalError: err,
+          };
+        default:
+          return {
+            type: 'UNKNOWN',
+            code,
+            message: err.message || 'An unexpected geolocation error occurred.',
+            originalError: err,
+          };
+      }
+    }
+
+    return {
+      type: 'UNKNOWN',
+      message: err?.message || 'Unable to detect location. Please tap to retry.',
+      originalError: err,
+    };
   }
 
-  getPermissionState(): string {
-    return this.permissionState;
+  private saveToStorage(location: CurrentLocation): void {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(location));
+    } catch {
+      // Storage unavailable
+    }
+  }
+
+  /**
+   * Clears saved location state.
+   */
+  public clearLocation(): void {
+    this.currentLocation = null;
+    this.currentError = null;
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {}
+    this.emit();
   }
 }
 
 export const locationService = new LocationService();
-export default LocationService;
+export default locationService;

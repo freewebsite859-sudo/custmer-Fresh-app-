@@ -1,3 +1,7 @@
+export * from './services/location/locationTypes';
+import { CurrentLocation } from './services/location/locationTypes';
+export type UserLocation = CurrentLocation;
+
 export type Screen = 
   | 'splash' 
   | 'welcome' 
@@ -6,19 +10,17 @@ export type Screen =
   | 'salon-detail' 
   | 'checkout' 
   | 'bookings' 
-  | 'favourites'
-  | 'location-modal' 
-  | 'location-permission'
-  | 'popular-cities'
+  | 'favourites' 
+  | 'popular-cities' 
   | 'rewards' 
-  | 'profile'
-  | 'saved-addresses'
-  | 'support'
-  | 'settings'
-  | 'owner-dashboard'
-  | 'gp-dashboard'
-  | 'terms'
-  | 'privacy'
+  | 'profile' 
+  | 'saved-addresses' 
+  | 'support' 
+  | 'settings' 
+  | 'owner-dashboard' 
+  | 'gp-dashboard' 
+  | 'terms' 
+  | 'privacy' 
   | 'cancellation';
 
 export type UserRole = 'customer' | 'business_user' | 'growth_partner';
@@ -116,17 +118,6 @@ export interface Booking {
   isReviewed?: boolean;
 }
 
-export interface UserLocation {
-  city: string;
-  area: string;
-  address?: string;
-  isGPS: boolean;
-  lat?: number;
-  lng?: number;
-  accuracy?: number;
-  lastUpdated?: number;
-}
-
 export interface Address {
   id: string;
   label: string;
@@ -175,7 +166,6 @@ export interface ServiceReview {
   date: string;
   comment: string;
   verifiedBooking?: boolean;
-  /** Booking that this review was written for (when submitted from a past booking). */
   bookingId?: string;
 }
 
@@ -222,4 +212,3 @@ export interface SavedService {
   salonName: string;
   category: string;
 }
-

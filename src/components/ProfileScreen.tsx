@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { JAIPUR_LOCATIONS } from '../data/locations';
 import { supabase } from '../lib/supabaseClient';
-import { Screen, UserLocation, Booking, Address } from '../types';
+import { Screen, Booking, Address } from '../types';
 import { CustomerProfile, ProfilePatch, avatarUrlWithVersion } from '../lib/profileRepository';
 import {
   loadPaymentMethods, addUpiMethod, addCardMethod, deletePaymentMethod, subscribeToPaymentMethods,
@@ -21,12 +20,10 @@ import { InstallApp } from './InstallApp';
 import { Modal } from './Modal';
 
 interface ProfileScreenProps {
-  location: UserLocation;
   favoritesCount: number;
   bookings: Booking[];
   onNavigate: (screen: Screen) => void;
   onBack?: () => void;
-  onOpenLocation: () => void;
   customerId: string;
   profile: CustomerProfile | null;
   onSaveProfile: (patch: ProfilePatch) => Promise<boolean>;
@@ -70,12 +67,10 @@ const MenuItem: React.FC<MenuItemProps> = ({ icon, label, badge, onClick, isDest
 );
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
-  location,
   favoritesCount,
   bookings,
   onNavigate,
   onBack,
-  onOpenLocation,
   customerId,
   profile,
   onSaveProfile,
@@ -156,7 +151,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [isScanQrOpen, setIsScanQrOpen] = useState(false);
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
-  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
   const [prefilledUpiInput, setPrefilledUpiInput] = useState<string>('');
 
   const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
@@ -281,7 +275,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [formCity, setFormCity] = useState<string>('Jaipur');
   const [formPincode, setFormPincode] = useState<string>('');
   const [formIsDefault, setFormIsDefault] = useState<boolean>(false);
-  const [isLocating, setIsLocating] = useState<boolean>(false);
 
   const [supportMessages, setSupportMessages] = useState<Array<{ sender: 'user' | 'bot'; text: string }>>([
     { sender: 'bot', text: 'Hi! I am the Nexora automated assistant. Ask me about bookings, payments or your profile.' },
@@ -296,12 +289,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     setTimeout(() => setToast(null), 2500);
   };
 
-  /**
-   * Normalise an Indian mobile number to the canonical "+91 XXXXX XXXXX"
-   * format. Accepts raw 10-digit ("9876543210"), +91-prefixed with or
-   * without spaces ("+919876543210", "+91 98765 43210") and empty input.
-   * Returns '' for empty — callers store null then.
-   */
   const normalizePhone = (raw: string): string => {
     const digits = raw.replace(/[^0-9]/g, '');
     if (!digits) return '';
@@ -311,7 +298,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     if (digits.length === 12 && digits.startsWith('91')) {
       return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
     }
-    // Unrecognised length — keep as-is; validation below will surface it.
     return raw.trim();
   };
 
@@ -325,7 +311,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     tempCity: string,
     tempArea: string
   ) => {
-    // 1. Validation
     if (!tempName.trim()) {
       setNameError('Full Name is required');
       return;
@@ -342,9 +327,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       return;
     }
 
-    // Phone is OPTIONAL; when provided it must be a valid 10-digit Indian
-    // number. Accept both raw digits (older signups stored "9876543210")
-    // and the +91-prefixed format — normalise to "+91 XXXXX XXXXX".
     const normalizedPhone = normalizePhone(tempPhone);
     if (normalizedPhone && normalizedPhone.replace(/\s+/g, '').length !== 13) {
       triggerToast('Phone number must be a valid 10-digit number.');
@@ -353,7 +335,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
     setIsSavingProfile(true);
 
-    // 2. Integration with Supabase user metadata & email update
     if (supabase) {
       try {
         const { error: authError } = await supabase.auth.updateUser({
@@ -374,7 +355,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       }
     }
 
-    // 3. Database profiles table update
     const patch: ProfilePatch = {
       full_name: tempName.trim(),
       phone: normalizedPhone || null,
@@ -404,31 +384,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     } else {
       triggerToast('Could not sync profile — please try again.');
     }
-  };
-
-  const handleDetectLocation = () => {
-    if (isDetectingLocation) return;
-    if (!('geolocation' in navigator)) {
-      triggerToast('Geolocation is not supported.');
-      return;
-    }
-    setIsDetectingLocation(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        try {
-          const { latitude, longitude } = pos.coords;
-          // Native GPS only — no reverse geocoding API. Use coords confidence hint.
-          triggerToast(`GPS acquired (${latitude.toFixed(4)}, ${longitude.toFixed(4)}) — verify area before saving.`);
-        } finally {
-          setIsDetectingLocation(false);
-        }
-      },
-      () => {
-        setIsDetectingLocation(false);
-        triggerToast('Please enable location to discover nearby salons.');
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    );
   };
 
   const [isCopiedLink, setIsCopiedLink] = useState(false);
@@ -507,15 +462,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     const makeDefault = formIsDefault || savedAddresses.length === 0;
     const op = addressView === 'add' ? addAddress(supabase, customerId, payload, makeDefault) : selectedAddressForEdit ? updateAddress(supabase, customerId, selectedAddressForEdit.id, payload, makeDefault) : null;
     if (op) op.then(setSavedAddresses).then(() => { triggerToast('Saved!'); setAddressView('list'); });
-  };
-
-  const handleLocateMeInForm = () => {
-    if (!('geolocation' in navigator)) return;
-    setIsLocating(true);
-    navigator.geolocation.getCurrentPosition((pos) => {
-      triggerToast(`GPS position found ±${Math.round(pos.coords.accuracy)}m.`);
-      setIsLocating(false);
-    }, () => setIsLocating(false), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
   };
 
   const upcomingCount = bookings.filter((b) => b.status === 'CONFIRMED' || b.status === 'PENDING').length;
@@ -678,7 +624,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </div>
             <div className="bg-white rounded-2xl p-4 border border-[#e8e8e8] flex flex-col gap-4 shadow-xs">
               <div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#594047] ml-1">Preferred City</label><div className="relative flex items-center"><span className="material-symbols-outlined absolute left-4 text-[#8c7077] text-[20px]">location_city</span><select value={editFormCity} onChange={(e) => setEditFormCity(e.target.value)} className="w-full h-12 bg-[#fcf9f8] rounded-xl pl-11 pr-10 border border-[#e8e8e8] focus:outline-none focus:ring-2 focus:ring-[#b90064] appearance-none font-medium"><option value="jaipur">Jaipur</option><option value="mumbai">Mumbai</option><option value="delhi">Delhi NCR</option><option value="bangalore">Bangalore</option></select><span className="material-symbols-outlined absolute right-4 text-[#8c7077] pointer-events-none">expand_more</span></div></div>
-              <div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#594047] ml-1">Preferred Area</label><div className="relative flex items-center"><span className="material-symbols-outlined absolute left-4 text-[#8c7077] text-[20px]">pin_drop</span><input type="text" value={editFormArea} onChange={(e) => setEditFormArea(e.target.value)} className="w-full h-12 bg-[#fcf9f8] rounded-xl pl-11 pr-12 border border-[#e8e8e8] focus:outline-none focus:ring-2 focus:ring-[#b90064]" placeholder="e.g. Malviya Nagar" /><button type="button" onClick={handleDetectLocation} disabled={isDetectingLocation} className="absolute right-3 w-8 h-8 text-[#b90064] hover:bg-[#ffe8ed] rounded-full transition-colors flex items-center justify-center cursor-pointer disabled:opacity-60"><span className={`material-symbols-outlined text-[18px] ${isDetectingLocation ? 'animate-spin' : ''}`}>{isDetectingLocation ? 'progress_activity' : 'my_location'}</span></button></div></div>
+              <div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#594047] ml-1">Preferred Area</label><div className="relative flex items-center"><span className="material-symbols-outlined absolute left-4 text-[#8c7077] text-[20px]">pin_drop</span><input type="text" value={editFormArea} onChange={(e) => setEditFormArea(e.target.value)} className="w-full h-12 bg-[#fcf9f8] rounded-xl pl-11 pr-4 border border-[#e8e8e8] focus:outline-none focus:ring-2 focus:ring-[#b90064]" placeholder="e.g. Malviya Nagar" /></div></div>
             </div>
           </div>
           <div className="pt-2 border-t border-[#e8e8e8] flex gap-2">
@@ -699,10 +645,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
       <Modal isOpen={isReferEarnOpen} onClose={() => setIsReferEarnOpen(false)} title="Refer & Earn">
         {(() => {
-          // Referral state comes from App's session state (shared with the
-          // Rewards screen) — never from localStorage. A deterministic code
-          // derived from the shared profile row is used until the user
-          // generates one in the Rewards tab.
           const activeCode =
             referralCode ||
             (profile?.id ? `NEX-${profile.id.slice(0, 4).toUpperCase()}` : null);
@@ -820,7 +762,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         {addressView === 'list' ? (
           <div className="flex flex-col gap-4 animate-in fade-in duration-200">{savedAddresses.length === 0 ? (<div className="flex flex-col items-center justify-center py-10 text-center gap-3"><div className="w-16 h-16 rounded-full bg-slate-100 text-[#8c7077] flex items-center justify-center"><span className="material-symbols-outlined text-[32px]">location_off</span></div><h4 className="text-[15px] font-bold text-[#26181c]">No Saved Addresses</h4><button type="button" onClick={handleAddNewAddressInit} className="mt-2 px-6 h-11 bg-[#b90064] text-white font-bold text-xs rounded-xl hover:bg-[#8e004b] transition-all shadow-md cursor-pointer">+ Add Your First Address</button></div>) : (<div className="flex flex-col gap-3 max-h-[55vh] overflow-y-auto no-scrollbar">{savedAddresses.map((addr) => (<div key={addr.id} className={`p-4 rounded-2xl border transition-all ${addr.isDefault ? 'bg-[#fff8f8] border-[#e0bec6] ring-1 ring-[#e0bec6]' : 'bg-white border-[#e8e8e8] hover:border-slate-300'} flex flex-col gap-3 relative overflow-hidden`}><div className="flex items-start justify-between gap-2"><div className="flex items-center gap-2.5"><div className={`w-9 h-9 rounded-full flex items-center justify-center ${addr.isDefault ? 'bg-[#ffd9e2] text-[#8e004b]' : 'bg-slate-100 text-[#5a3f47]'}`}><span className="material-symbols-outlined text-[18px]">{addr.label === 'Home' ? 'home' : addr.label === 'Office' ? 'business' : 'location_on'}</span></div><div><span className="text-[14px] font-extrabold text-[#26181c]">{addr.label}</span>{addr.isDefault && (<span className="ml-2 px-2 py-0.5 bg-[#E8F5E9] text-[#2E7D32] text-[9px] font-extrabold tracking-wide uppercase rounded-full border border-[#2E7D32]/20">Default</span>)}</div></div><div className="flex gap-1"><button type="button" onClick={() => handleEditAddressInit(addr)} className="w-8 h-8 rounded-full hover:bg-[#ffe8ed] text-[#8c7077] hover:text-[#b90064] flex items-center justify-center transition-colors cursor-pointer"><span className="material-symbols-outlined text-[18px]">edit</span></button><button type="button" onClick={() => handleDeleteAddress(addr.id)} className="w-8 h-8 rounded-full hover:bg-red-50 text-[#8c7077] hover:text-red-600 flex items-center justify-center transition-colors cursor-pointer"><span className="material-symbols-outlined text-[18px]">delete</span></button></div></div><div className="text-xs text-[#5a3f47] leading-relaxed pl-1.5 border-l-2 border-[#e8e8e8]"><p className="font-semibold text-[#26181c]">{addr.flatNumber}</p><p>{addr.street}</p>{addr.landmark && <p className="text-[11px] text-[#8c7077] italic">Landmark: {addr.landmark}</p>}<p className="mt-0.5 font-medium">{addr.city} - {addr.pincode}</p></div>{!addr.isDefault && (<button type="button" onClick={() => handleSetDefaultAddress(addr.id)} className="text-[11px] text-[#b90064] font-bold hover:underline self-start pl-1.5 cursor-pointer">Set as default address</button>)}</div>))}</div>)}<div className="pt-2 border-t border-[#e8e8e8] flex flex-col gap-2"><button type="button" onClick={handleAddNewAddressInit} className="w-full h-12 bg-[#b90064] text-white font-bold rounded-xl transition-all shadow-md hover:bg-[#8e004b] flex items-center justify-center gap-2 cursor-pointer text-sm"><span className="material-symbols-outlined text-[18px]">add</span>Add New Address</button><button type="button" onClick={() => setIsAddressesOpen(false)} className="w-full h-11 bg-white border border-[#e8e8e8] text-[#5a3f47] font-bold rounded-xl transition-all hover:bg-slate-50 cursor-pointer text-xs">Close</button></div></div>
         ) : (
-          <div className="flex flex-col gap-4 animate-in fade-in duration-200"><div className="w-full h-44 rounded-2xl overflow-hidden relative shadow-sm border border-[#e8e8e8]" style={{ backgroundImage: 'linear-gradient(135deg, #fde7f3 0%, #fcf9f8 55%, #f3d4e0 100%)', backgroundSize: 'cover', backgroundPosition: 'center' }}><div className="absolute inset-0 flex items-center justify-center pointer-events-none"><span className="material-symbols-outlined text-[72px] text-[#b90064]/15">location_on</span></div><div className="absolute inset-0 flex items-end justify-center pb-3"><button type="button" onClick={handleLocateMeInForm} disabled={isLocating} className="bg-white px-4 py-2 rounded-full shadow-lg flex items-center gap-2 cursor-pointer active:scale-95 transition-transform border border-slate-100">{isLocating ? (<><span className="material-symbols-outlined text-[#b90064] text-lg animate-spin">progress_activity</span><span className="text-[12px] font-bold text-[#26181c]">Locating...</span></>) : (<><span className="material-symbols-outlined text-[#b90064] text-lg">my_location</span><span className="text-[12px] font-bold text-[#26181c]">Locate Me</span></>)}</button></div><div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 drop-shadow-md pointer-events-none"><span className="material-symbols-outlined text-[#b90064] text-4xl font-bold fill-current" style={{ fontVariationSettings: "'FILL' 1" }}>location_on</span></div></div><div className="flex flex-col gap-4 max-h-[42vh] overflow-y-auto no-scrollbar"><div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#5a3f47] ml-1">Address Label</label><div className="flex gap-2">{['Home', 'Office', 'Other'].map((l) => (<button key={l} type="button" onClick={() => setFormLabel(l)} className={`flex-1 h-11 rounded-xl font-bold text-[13px] transition-all cursor-pointer ${formLabel === l ? 'bg-[#b90064] text-white shadow-md' : 'bg-slate-100 text-[#5a3f47] hover:bg-slate-200/60'}`}>{l}</button>))}</div></div><div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#5a3f47] ml-1">House / Flat Number</label><input type="text" value={formFlat} onChange={(e) => setFormFlat(e.target.value)} placeholder="e.g. Flat 201" className="w-full h-11 bg-[#fcf9f8] rounded-xl px-4 border border-[#e8e8e8] font-medium" /></div><div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#5a3f47] ml-1">Street / Area</label><input type="text" value={formStreet} onChange={(e) => setFormStreet(e.target.value)} placeholder="e.g. Jhotwara Road" className="w-full h-11 bg-[#fcf9f8] rounded-xl px-4 border border-[#e8e8e8] font-medium" /></div><div className="grid grid-cols-2 gap-3"><div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#5a3f47] ml-1">City</label><input type="text" value={formCity} onChange={(e) => setFormCity(e.target.value)} className="w-full h-11 bg-[#fcf9f8] rounded-xl px-4 border border-[#e8e8e8] font-medium" /></div><div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#5a3f47] ml-1">PIN Code</label><input type="text" value={formPincode} onChange={(e) => setFormPincode(e.target.value)} className="w-full h-11 bg-[#fcf9f8] rounded-xl px-4 border border-[#e8e8e8] font-medium" /></div></div><div onClick={() => setFormIsDefault(!formIsDefault)} className="mt-1.5 flex items-center gap-3 cursor-pointer select-none"><div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300 ${formIsDefault ? 'bg-[#b90064]/20' : 'bg-slate-200'}`}><div className={`w-3 h-3 rounded-full transition-colors duration-300 ${formIsDefault ? 'bg-[#b90064]' : 'bg-transparent'}`}></div></div><span className="text-[13px] font-bold text-[#26181c]">Set as default address</span></div></div><div className="pt-2 border-t border-[#e8e8e8] flex gap-2"><button type="button" onClick={() => setAddressView('list')} className="flex-1 h-12 bg-[#fff8f8] border border-[#e0bec6] text-[#b90064] font-bold rounded-xl transition-all hover:bg-[#ffe8ed] cursor-pointer text-sm">Cancel</button><button type="button" onClick={handleSaveAddressForm} className="flex-1 h-12 bg-[#b90064] text-white font-bold rounded-xl shadow-md hover:bg-[#8e004b] cursor-pointer text-sm">Save Address</button></div></div>
+          <div className="flex flex-col gap-4 animate-in fade-in duration-200"><div className="flex flex-col gap-4 max-h-[42vh] overflow-y-auto no-scrollbar"><div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#5a3f47] ml-1">Address Label</label><div className="flex gap-2">{['Home', 'Office', 'Other'].map((l) => (<button key={l} type="button" onClick={() => setFormLabel(l)} className={`flex-1 h-11 rounded-xl font-bold text-[13px] transition-all cursor-pointer ${formLabel === l ? 'bg-[#b90064] text-white shadow-md' : 'bg-slate-100 text-[#5a3f47] hover:bg-slate-200/60'}`}>{l}</button>))}</div></div><div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#5a3f47] ml-1">House / Flat Number</label><input type="text" value={formFlat} onChange={(e) => setFormFlat(e.target.value)} placeholder="e.g. Flat 201" className="w-full h-11 bg-[#fcf9f8] rounded-xl px-4 border border-[#e8e8e8] font-medium" /></div><div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#5a3f47] ml-1">Street / Area</label><input type="text" value={formStreet} onChange={(e) => setFormStreet(e.target.value)} placeholder="e.g. Jhotwara Road" className="w-full h-11 bg-[#fcf9f8] rounded-xl px-4 border border-[#e8e8e8] font-medium" /></div><div className="grid grid-cols-2 gap-3"><div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#5a3f47] ml-1">City</label><input type="text" value={formCity} onChange={(e) => setFormCity(e.target.value)} className="w-full h-11 bg-[#fcf9f8] rounded-xl px-4 border border-[#e8e8e8] font-medium" /></div><div className="flex flex-col gap-1.5"><label className="text-[12px] font-bold text-[#5a3f47] ml-1">PIN Code</label><input type="text" value={formPincode} onChange={(e) => setFormPincode(e.target.value)} className="w-full h-11 bg-[#fcf9f8] rounded-xl px-4 border border-[#e8e8e8] font-medium" /></div></div><div onClick={() => setFormIsDefault(!formIsDefault)} className="mt-1.5 flex items-center gap-3 cursor-pointer select-none"><div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300 ${formIsDefault ? 'bg-[#b90064]/20' : 'bg-slate-200'}`}><div className={`w-3 h-3 rounded-full transition-colors duration-300 ${formIsDefault ? 'bg-[#b90064]' : 'bg-transparent'}`}></div></div><span className="text-[13px] font-bold text-[#26181c]">Set as default address</span></div></div><div className="pt-2 border-t border-[#e8e8e8] flex gap-2"><button type="button" onClick={() => setAddressView('list')} className="flex-1 h-12 bg-[#fff8f8] border border-[#e0bec6] text-[#b90064] font-bold rounded-xl transition-all hover:bg-[#ffe8ed] cursor-pointer text-sm">Cancel</button><button type="button" onClick={handleSaveAddressForm} className="flex-1 h-12 bg-[#b90064] text-white font-bold rounded-xl shadow-md hover:bg-[#8e004b] cursor-pointer text-sm">Save Address</button></div></div>
         )}
       </Modal>
 
