@@ -1,19 +1,26 @@
 # Vercel Environment Variable Setup
 
-## Add Google Geolocation API Key to Vercel
+## Add Google Maps / Geocoding API Key to Vercel
 
 1. Go to [Vercel Dashboard](https://vercel.com/dashboard)
 2. Select your project **custmer-fresh-app**
 3. Go to **Settings** → **Environment Variables**
-4. Add the following variable:
+4. Add the following variable (the app reads this exact name):
 
 | Key | Value |
 |---|---|
-| `VITE_GOOGLE_GEOLOCATION_API_KEY` | `AIzaSyA-Gcqz5-iQbqm0vPfk98ONrtAENUX3dTk` |
+| `VITE_GOOGLE_MAPS_API_KEY` | `AIzaSyA-Gcqz5-iQbqm0vPfk98ONrtAENUX3dTk` |
+
+> ⚠️ The variable **must** be named `VITE_GOOGLE_MAPS_API_KEY`. The older
+> `VITE_GOOGLE_GEOLOCATION_API_KEY` name is **not** read by the current code
+> and is only kept as an optional fallback — always set
+> `VITE_GOOGLE_MAPS_API_KEY`.
 
 5. Select **Production**, **Preview**, and **Development** environments
 6. Click **Save**
-7. Go to **Deployments** → Latest deployment → **Redeploy**
+7. Go to **Deployments** → Latest **Production** deployment → **Redeploy**
+   (Vite inlines `VITE_*` variables at build time, so a redeploy is required
+   for the key to take effect in production).
 
 ## What This Enables
 
