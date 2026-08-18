@@ -211,6 +211,7 @@ export default function App() {
   const [salons, setSalons] = useState<Salon[]>([]);
   const [salonsLoading, setSalonsLoading] = useState(true);
   const [selectedSalon, setSelectedSalon] = useState<Salon | null>(null);
+  const [exploreCategory, setExploreCategory] = useState<string>('All');
   const [selectedServices, setSelectedServices] = useState<Service[]>([]);
   const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null);
 
@@ -869,7 +870,7 @@ export default function App() {
       case 'home':
         return '';
       case 'search':
-        return 'Find Salons';
+        return 'Explore';
       case 'salon-detail':
         return 'Booking Detail';
       case 'checkout':
@@ -1046,14 +1047,21 @@ export default function App() {
               salons={salons}
               salonsLoading={salonsLoading}
               favorites={favorites}
+              favoriteServicesCount={favoriteServices.length}
+              favoriteProfessionalsCount={favoriteProfessionals.length}
               recentlyViewed={recentlyViewed}
               bookings={bookings}
+              customerName={profile?.full_name ?? ''}
               onToggleFavorite={handleToggleFavorite}
               onSelectSalon={handleSelectSalon}
               onNavigate={(s) => setCurrentScreen(s)}
               onOpenLocationSelector={() => {}}
               isAppointmentDismissed={isAppointmentDismissed}
               onDismissAppointment={() => setIsAppointmentDismissed(true)}
+              onExploreCategory={(categoryId) => {
+                setExploreCategory(categoryId);
+                setCurrentScreen('search');
+              }}
             />
           )}
 
@@ -1063,6 +1071,7 @@ export default function App() {
               salonsLoading={salonsLoading}
               favorites={favorites}
               userCity="Jaipur"
+              initialCategory={exploreCategory}
               onToggleFavorite={handleToggleFavorite}
               onSelectSalon={handleSelectSalon}
               onBack={() => setCurrentScreen('home')}
@@ -1217,8 +1226,11 @@ export default function App() {
               salons={salons}
               salonsLoading={salonsLoading}
               favorites={favorites}
+              favoriteServicesCount={favoriteServices.length}
+              favoriteProfessionalsCount={favoriteProfessionals.length}
               recentlyViewed={recentlyViewed}
               bookings={bookings}
+              customerName={profile?.full_name ?? ''}
               onToggleFavorite={handleToggleFavorite}
               onSelectSalon={handleSelectSalon}
               onNavigate={(s) => setCurrentScreen(s)}
@@ -1242,7 +1254,12 @@ export default function App() {
 
         <BottomNav
           currentScreen={currentScreen}
-          onNavigate={(s) => setCurrentScreen(s)}
+          onNavigate={(s) => {
+            // Tapping the Explore tab directly (not a Home category chip)
+            // should browse everything, not stay pinned to a prior category.
+            if (s === 'search') setExploreCategory('All');
+            setCurrentScreen(s);
+          }}
           unreadBookingsCount={
             bookings.filter((b) => b.status === 'CONFIRMED' || b.status === 'PENDING').length
           }

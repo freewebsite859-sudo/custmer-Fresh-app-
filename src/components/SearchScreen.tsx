@@ -1,51 +1,75 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Salon } from '../types';
 import { SalonCardSkeleton } from './Skeleton';
 import { SmartSearchFilterBar } from './SmartSearchFilterBar';
+import { SERVICE_CATEGORIES, salonMatchesCategory, isSalonOpenNow } from '../lib/salonCategories';
 
 interface SearchScreenProps {
   salons: Salon[];
   salonsLoading?: boolean;
   favorites: string[];
   userCity?: string;
+  /** Pre-selected service category, e.g. from tapping "Hair" on Home. */
+  initialCategory?: string;
   onToggleFavorite: (salonId: string) => void;
   onSelectSalon: (salon: Salon) => void;
   onBack: () => void;
 }
+
+const QUICK_FILTER_CHIPS = [
+  { id: 'open-now', label: 'Open Now', icon: 'schedule' },
+  { id: 'available-today', label: 'Available Today', icon: 'event_available' },
+  { id: 'top-rated', label: 'Top Rated', icon: 'star' },
+  { id: 'nearest', label: 'Nearest', icon: 'near_me' },
+  { id: 'offers', label: 'Offers', icon: 'sell' },
+  { id: 'at-home', label: 'At Home', icon: 'home' },
+] as const;
+
+type QuickFilterId = (typeof QUICK_FILTER_CHIPS)[number]['id'];
 
 export const SearchScreen: React.FC<SearchScreenProps> = ({
   salons,
   salonsLoading = false,
   favorites,
   userCity = 'Jaipur',
+  initialCategory = 'All',
   onToggleFavorite,
   onSelectSalon,
+  onBack,
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [showFilters, setShowFilters] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory || 'All');
   const [smartFilter, setSmartFilter] = useState<'all' | 'top-rated-city' | 'top-nexora'>('all');
-  const [selectedGenderFilter, setSelectedGenderFilter] = useState<string>('All');
-  const [selectedMinPrice, setSelectedMinPrice] = useState<number>(0);
-  const [selectedMaxPrice, setSelectedMaxPrice] = useState<number>(5000);
-  const [selectedMinRating, setSelectedMinRating] = useState<number>(0);
-  const [selectedDistance, setSelectedDistance] = useState<number>(10);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [showMapView, setShowMapView] = useState<boolean>(false);
+  const [activeQuickFilters, setActiveQuickFilters] = useState<QuickFilterId[]>([]);
+  const [sortBy, setSortBy] = useState<'recommended' | 'price-low' | 'price-high' | 'rating'>('recommended');
+  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [activeSalonOnMap, setActiveSalonOnMap] = useState<Salon | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   useEffect(() => {
-    // Smooth transition without flashing empty skeletons on filter toggle
+    setSelectedCategory(initialCategory || 'All');
+  }, [initialCategory]);
+
+  useEffect(() => {
     if (searchQuery) {
       setIsLoading(true);
-      const timer = setTimeout(() => {
-        setIsLoading(false);
-      }, 150);
+      const timer = setTimeout(() => setIsLoading(false), 150);
       return () => clearTimeout(timer);
     }
   }, [searchQuery]);
 
-  const filteredSalons = React.useMemo(() => {
+  const toggleQuickFilter = (id: QuickFilterId) => {
+    setActiveQuickFilters((prev) => (prev.includes(id) ? prev.filter((f) => f !== id) : [...prev, id]));
+  };
+
+  const activeCategoryLabel = useMemo(
+    () => SERVICE_CATEGORIES.find((c) => c.id === selectedCategory)?.label || 'Services',
+    [selectedCategory],
+  );
+
+  const filteredSalons = useMemo(() => {
     return salons
       .filter((s) => {
         const q = searchQuery.toLowerCase();
@@ -56,358 +80,282 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           s.tags.some((t) => t.toLowerCase().includes(q)) ||
           s.services.some((ser) => ser.name.toLowerCase().includes(q));
 
-        const matchesGender =
-          selectedGenderFilter === 'All' ||
-          !s.genderCategory ||
-          s.genderCategory === selectedGenderFilter;
+        const matchesCategory = salonMatchesCategory(s, selectedCategory);
 
-        const matchesPrice = s.startingPrice >= selectedMinPrice && s.startingPrice <= selectedMaxPrice;
-        
-        const matchesRating = s.rating === 0 || s.rating >= selectedMinRating; // unrated ("New") salons are not hidden by rating filters
+        const matchesQuickFilters = activeQuickFilters.every((f) => {
+          if (f === 'open-now') return isSalonOpenNow(s.hours);
+          if (f === 'available-today') return isSalonOpenNow(s.hours);
+          if (f === 'top-rated') return s.rating >= 4.5;
+          if (f === 'nearest') return s.distanceKm > 0 && s.distanceKm <= 5;
+          if (f === 'offers') return (s.offers?.length ?? 0) > 0;
+          if (f === 'at-home') return s.tags.some((t) => /home/i.test(t)) || /home service/i.test(s.description || '');
+          return true;
+        });
 
-        const matchesDistance = s.distanceKm <= selectedDistance;
-
-        return matchesSearch && matchesGender && matchesPrice && matchesRating && matchesDistance;
+        return matchesSearch && matchesCategory && matchesQuickFilters;
       })
       .sort((a, b) => {
         if (smartFilter === 'top-rated-city') {
-          // Sort by Rating DESC -> Review Count DESC
           if (b.rating !== a.rating) return b.rating - a.rating;
           const aRev = a.verifiedReviewsCount || a.reviewCount || 0;
           const bRev = b.verifiedReviewsCount || b.reviewCount || 0;
           return bRev - aRev;
         }
         if (smartFilter === 'top-nexora') {
-          // Sort by Completed Bookings DESC -> Rating DESC
           const aBookings = a.completedBookings || Math.floor(a.rating * 80);
           const bBookings = b.completedBookings || Math.floor(b.rating * 80);
           if (bBookings !== aBookings) return bBookings - aBookings;
           return b.rating - a.rating;
         }
+        if (sortBy === 'price-low') return a.startingPrice - b.startingPrice;
+        if (sortBy === 'price-high') return b.startingPrice - a.startingPrice;
+        if (sortBy === 'rating') return b.rating - a.rating;
+        // Recommended: favourites first, then distance, then rating.
+        const aFav = favorites.includes(a.id) ? 1 : 0;
+        const bFav = favorites.includes(b.id) ? 1 : 0;
+        if (aFav !== bFav) return bFav - aFav;
+        if (a.distanceKm > 0 && b.distanceKm > 0 && a.distanceKm !== b.distanceKm) return a.distanceKm - b.distanceKm;
         return b.rating - a.rating;
       });
-  }, [salons, searchQuery, smartFilter, selectedGenderFilter, selectedMinPrice, selectedMaxPrice, selectedMinRating, selectedDistance]);
+  }, [salons, searchQuery, selectedCategory, activeQuickFilters, smartFilter, sortBy, favorites]);
+
+  const sortOptions: Array<{ id: typeof sortBy; label: string }> = [
+    { id: 'recommended', label: 'Recommended' },
+    { id: 'price-low', label: 'Price: Low to High' },
+    { id: 'price-high', label: 'Price: High to Low' },
+    { id: 'rating', label: 'Highest Rated' },
+  ];
+  const activeSortLabel = sortOptions.find((o) => o.id === sortBy)?.label || 'Recommended';
 
   return (
     <div className="flex flex-col w-full max-w-md mx-auto gap-5 pb-32 pt-2">
-      {/* Search Input Bar */}
-      <div className="flex flex-col gap-3">
-        <div className="relative w-full">
-          <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#5a3f47]">
-            search
-          </span>
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search salons, services..."
-            className="w-full h-12 pl-12 pr-12 rounded-2xl bg-[#fce2e7] text-[#26181c] text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-[#e6007e]/30 transition-all placeholder:text-[#5a3f47]/50"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-lg text-[#5a3f47] hover:text-[#e6007e]"
-            >
-              <span className="material-symbols-outlined text-[20px]">close</span>
-            </button>
-          )}
+      {/* Hero — reflects the real, currently-matching result count and category */}
+      <section className="flex flex-col gap-1">
+        <h1 className="font-page-heading text-page-heading text-on-surface">
+          {filteredSalons.length} places near you
+        </h1>
+        <p className="font-body-md text-body-md text-on-surface-variant">
+          Find nearby salons and barbers{selectedCategory !== 'All' ? ` offering ${activeCategoryLabel}` : ''}
+        </p>
+      </section>
+
+      {/* Category Chips */}
+      <section className="-mx-5">
+        <div className="overflow-x-auto no-scrollbar flex gap-2 px-5">
+          {SERVICE_CATEGORIES.map((cat) => {
+            const isSelected = selectedCategory === cat.id;
+            return (
+              <button
+                key={cat.id}
+                onClick={() => setSelectedCategory(cat.id)}
+                className={`px-5 py-2 rounded-full font-button-text text-[14px] whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  isSelected
+                    ? 'bg-nexora-pink text-white shadow-sm'
+                    : 'bg-surface-container text-on-surface-variant border border-outline-variant hover:border-nexora-pink hover:text-nexora-pink'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[16px]">{cat.icon}</span>
+                {cat.label}
+              </button>
+            );
+          })}
         </div>
+      </section>
 
-        {/* Permanent Smart Search Filters */}
-        <SmartSearchFilterBar
-          activeFilter={smartFilter}
-          userCity={userCity}
-          onSelectFilter={setSmartFilter}
+      {/* Search Bar */}
+      <div className="relative w-full">
+        <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">
+          search
+        </span>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder={`Search in ${activeCategoryLabel}`}
+          className="w-full h-12 pl-12 pr-12 rounded-2xl bg-surface-container-highest text-on-surface text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-nexora-pink/30 transition-all placeholder:text-outline"
         />
-
-        {/* Simple Filter Toggle */}
-        <div className="flex gap-2">
+        {searchQuery && (
           <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`flex items-center justify-center gap-1.5 flex-1 h-10 rounded-xl font-bold text-[13px] transition-all ${
-              showFilters ? 'bg-[#26181c] text-white' : 'bg-white border border-[#e8e8e8] text-[#26181c]'
+            onClick={() => setSearchQuery('')}
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-nexora-pink cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[20px]">close</span>
+          </button>
+        )}
+      </div>
+
+      {/* Permanent Smart Search Filters */}
+      <SmartSearchFilterBar
+        activeFilter={smartFilter}
+        userCity={userCity}
+        onSelectFilter={setSmartFilter}
+      />
+
+      {/* Sort + List/Map Toggle */}
+      <div className="flex items-center justify-between relative">
+        <button
+          onClick={() => setIsSortMenuOpen((v) => !v)}
+          className="flex items-center gap-1 text-on-surface-variant hover:text-nexora-pink transition-colors cursor-pointer"
+        >
+          <span className="material-symbols-outlined text-[20px]">sort</span>
+          <span className="font-button-text text-[14px]">Sort: {activeSortLabel}</span>
+          <span className="material-symbols-outlined text-[18px]">{isSortMenuOpen ? 'expand_less' : 'expand_more'}</span>
+        </button>
+
+        <div className="flex bg-surface-container rounded-lg p-1">
+          <button
+            onClick={() => setViewMode('list')}
+            className={`px-3 py-1 rounded-md font-button-text text-[12px] flex items-center gap-1 transition-colors cursor-pointer ${
+              viewMode === 'list' ? 'bg-white text-nexora-pink shadow-sm' : 'text-on-surface-variant hover:text-nexora-pink'
             }`}
           >
-            <span className="material-symbols-outlined text-[18px]">tune</span>
-            {showFilters ? 'Hide Filters' : 'Show Filters'}
+            <span className="material-symbols-outlined text-[16px]">list</span>
+            List
+          </button>
+          <button
+            onClick={() => {
+              setViewMode('map');
+              setActiveSalonOnMap(filteredSalons[0] || salons[0] || null);
+            }}
+            className={`px-3 py-1 rounded-md font-button-text text-[12px] flex items-center gap-1 transition-colors cursor-pointer ${
+              viewMode === 'map' ? 'bg-white text-nexora-pink shadow-sm' : 'text-on-surface-variant hover:text-nexora-pink'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[16px]">map</span>
+            Map
           </button>
         </div>
 
-        {/* Expandable Filter Panel */}
-        <AnimatePresence>
-          {showFilters && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden"
-            >
-              <div className="bg-white border border-[#e8e8e8] rounded-2xl p-4 flex flex-col gap-4">
-                <div>
-                  <p className="text-[12px] font-bold text-[#5a3f47] mb-2">Gender</p>
-                  <div className="flex flex-wrap gap-2">
-                    {['All', 'Women Only', 'Men Only', 'Unisex'].map(g => (
-                      <button
-                        key={g}
-                        onClick={() => setSelectedGenderFilter(g)}
-                        className={`px-3 py-1.5 rounded-full text-[12px] font-semibold transition-all ${
-                          selectedGenderFilter === g ? 'bg-[#e6007e] text-white' : 'bg-[#f6dce2] text-[#5a3f47]'
-                        }`}
-                      >
-                        {g === 'Women Only' ? 'Women' : g === 'Men Only' ? 'Men' : g}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-[12px] font-bold text-[#5a3f47]">Price Range</p>
-                    <p className="text-[12px] font-bold text-[#e6007e]">₹{selectedMinPrice} - ₹{selectedMaxPrice}</p>
-                  </div>
-                  
-                  <div className="flex flex-col gap-4">
-                    <div>
-                      <p className="text-[10px] text-[#8c7077] mb-1">Minimum Price</p>
-                      <input
-                        type="range"
-                        min="0"
-                        max="2000"
-                        step="100"
-                        value={selectedMinPrice}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          setSelectedMinPrice(val);
-                          if (val > selectedMaxPrice) setSelectedMaxPrice(val);
-                        }}
-                        className="w-full h-1.5 bg-[#f6dce2] rounded-lg appearance-none cursor-pointer accent-[#e6007e]"
-                      />
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-[#8c7077] mb-1">Maximum Price</p>
-                      <input
-                        type="range"
-                        min="500"
-                        max="10000"
-                        step="500"
-                        value={selectedMaxPrice}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          setSelectedMaxPrice(val);
-                          if (val < selectedMinPrice) setSelectedMinPrice(val);
-                        }}
-                        className="w-full h-1.5 bg-[#f6dce2] rounded-lg appearance-none cursor-pointer accent-[#e6007e]"
-                      />
-                    </div>
-                    
-                    <div className="flex gap-2">
-                      {[
-                        { label: 'Budget', min: 0, max: 1000 },
-                        { label: 'Mid-Range', min: 1000, max: 3000 },
-                        { label: 'Luxury', min: 3000, max: 10000 },
-                      ].map((tier) => (
-                        <button
-                          key={tier.label}
-                          onClick={() => {
-                            setSelectedMinPrice(tier.min);
-                            setSelectedMaxPrice(tier.max);
-                          }}
-                          className={`flex-1 py-2 rounded-xl text-[11px] font-bold transition-all border ${
-                            selectedMinPrice === tier.min && selectedMaxPrice === tier.max
-                              ? 'bg-[#26181c] text-white border-[#26181c]'
-                              : 'bg-white text-[#5a3f47] border-[#e8e8e8]'
-                          }`}
-                        >
-                          {tier.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex gap-4">
-                  <div className="flex-1">
-                    <p className="text-[12px] font-bold text-[#5a3f47] mb-2">Rating</p>
-                    <div className="flex flex-wrap gap-2">
-                      {[0, 4.0, 4.5].map(r => (
-                        <button
-                          key={r}
-                          onClick={() => setSelectedMinRating(r)}
-                          className={`px-3 py-1.5 rounded-full text-[12px] font-semibold transition-all flex items-center gap-1 ${
-                            selectedMinRating === r ? 'bg-[#e6007e] text-white' : 'bg-[#f6dce2] text-[#5a3f47]'
-                          }`}
-                        >
-                          {r === 0 ? 'Any' : `${r}+`}
-                          {r > 0 && <span className="material-symbols-outlined text-[12px]">star</span>}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex-1">
-                    <p className="text-[12px] font-bold text-[#5a3f47] mb-2">Distance</p>
-                    <div className="flex flex-wrap gap-2">
-                      {[2, 5, 10].map(d => (
-                        <button
-                          key={d}
-                          onClick={() => setSelectedDistance(d)}
-                          className={`px-3 py-1.5 rounded-full text-[12px] font-semibold transition-all ${
-                            selectedDistance === d ? 'bg-[#e6007e] text-white' : 'bg-[#f6dce2] text-[#5a3f47]'
-                          }`}
-                        >
-                          &lt; {d} km
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => {
-                    setSelectedGenderFilter('All');
-                    setSelectedMinPrice(0);
-                    setSelectedMaxPrice(5000);
-                    setSelectedMinRating(0);
-                    setSelectedDistance(10);
-                    setSmartFilter('all');
-                  }}
-                  className="mt-2 w-full h-10 bg-[#fde7f3] text-[#e6007e] rounded-xl font-bold text-[13px] active:scale-95 transition-all"
-                >
-                  Reset Filters
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {isSortMenuOpen && (
+          <div className="absolute top-full left-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-outline-variant z-20 overflow-hidden">
+            {sortOptions.map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() => {
+                  setSortBy(opt.id);
+                  setIsSortMenuOpen(false);
+                }}
+                className={`w-full text-left px-4 py-2.5 text-[13px] font-semibold transition-colors cursor-pointer ${
+                  sortBy === opt.id ? 'bg-primary-container text-nexora-pink' : 'text-on-surface hover:bg-surface-container-low'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Results Header */}
-      <div className="flex items-center justify-between mt-1">
-        <h2 className="text-[18px] font-bold text-[#26181c]">
-          {filteredSalons.length} Results {searchQuery ? `for "${searchQuery}"` : ''}
-        </h2>
-        <span className="text-[13px] font-semibold text-[#5a3f47]">Bandra West</span>
+      {/* Quick Filter Chips */}
+      <div className="-mx-5">
+        <div className="overflow-x-auto no-scrollbar flex gap-2 px-5">
+          {QUICK_FILTER_CHIPS.map((chip) => {
+            const isActive = activeQuickFilters.includes(chip.id);
+            return (
+              <button
+                key={chip.id}
+                onClick={() => toggleQuickFilter(chip.id)}
+                className={`px-4 py-2 rounded-full font-button-text text-[14px] whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1 ${
+                  isActive
+                    ? 'bg-nexora-pink text-white shadow-sm'
+                    : 'bg-surface-container text-on-surface-variant border border-outline-variant hover:border-nexora-pink hover:text-nexora-pink'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[18px]">{chip.icon}</span>
+                {chip.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Results List */}
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-component-gap">
         {isLoading || salonsLoading ? (
           Array.from({ length: 3 }).map((_, i) => <SalonCardSkeleton key={i} />)
         ) : filteredSalons.length > 0 ? (
           filteredSalons.map((salon) => {
             const isFav = favorites.includes(salon.id);
+            const openNow = isSalonOpenNow(salon.hours);
             return (
               <div
                 key={salon.id}
-                className="flex flex-col bg-white rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.04)] overflow-hidden border border-[#e8e8e8]"
+                className="bg-surface-container-low rounded-xl overflow-hidden shadow-sm border border-outline-variant"
               >
-                <div
-                  className="relative h-44 w-full bg-[#f6dce2] cursor-pointer"
-                  onClick={() => onSelectSalon(salon)}
-                >
-                  <img
-                    src={salon.image}
-                    alt={salon.name}
-                    className="w-full h-full object-cover"
-                  />
-                  {salon.rating > 0 ? (
-                    <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-md px-2.5 py-1 rounded-full flex items-center gap-1 shadow-sm">
-                      <span className="material-symbols-outlined text-[14px] text-[#e6007e]">
-                        star
-                      </span>
-                      <span className="text-[13px] font-bold text-[#26181c]">{salon.rating}</span>
-                      <span className="text-[11px] font-medium text-[#5a3f47]">({salon.reviewCount ?? salon.reviewsCount})</span>
-                    </div>
-                  ) : salon.isNew ? (
-                    <div className="absolute top-3 right-3 bg-emerald-500/95 px-2.5 py-1 rounded-full flex items-center shadow-sm">
-                      <span className="text-[11px] font-bold text-white">New</span>
-                    </div>
-                  ) : null}
-
+                <div className="relative h-48 cursor-pointer" onClick={() => onSelectSalon(salon)}>
+                  <img src={salon.image} alt={salon.name} className="w-full h-full object-cover" />
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       onToggleFavorite(salon.id);
                     }}
-                    className="absolute top-3 left-3 w-9 h-9 rounded-full bg-white/95 backdrop-blur-md flex items-center justify-center text-[#8c7077] shadow-sm hover:text-[#e6007e]"
+                    aria-label={isFav ? `Remove ${salon.name} from favorites` : `Add ${salon.name} to favorites`}
+                    className="absolute top-3 right-3 w-8 h-8 rounded-full bg-surface/80 backdrop-blur-md flex items-center justify-center text-nexora-pink cursor-pointer"
                   >
-                    <span className={`material-symbols-outlined text-[20px] ${isFav ? 'text-[#e6007e] fill-current' : ''}`}>
-                      favorite
-                    </span>
+                    <span className={`material-symbols-outlined text-[20px] ${isFav ? 'fill-1' : ''}`}>favorite</span>
                   </button>
+                  {openNow ? (
+                    <div className="absolute bottom-3 left-3 px-2 py-1 bg-success-emerald text-white text-[10px] font-bold rounded uppercase tracking-wider">
+                      Open
+                    </div>
+                  ) : salon.isNew ? (
+                    <div className="absolute bottom-3 left-3 px-2 py-1 bg-warning-amber text-white text-[10px] font-bold rounded uppercase tracking-wider">
+                      New
+                    </div>
+                  ) : null}
                 </div>
 
-                <div className="p-4 flex flex-col gap-3">
-                  <div className="flex justify-between items-start gap-4">
-                    <div>
-                      <h3
-                        onClick={() => onSelectSalon(salon)}
-                        className="text-[18px] font-bold text-[#26181c] cursor-pointer hover:text-[#e6007e]"
-                      >
-                        {salon.name}
-                      </h3>
-                      <p className="text-[14px] text-[#5a3f47] font-medium mt-0.5 flex items-center gap-1.5 flex-wrap">
-                        <span>{salon.area}{salon.distanceKm > 0 ? ` • ${salon.distanceKm} km` : ''}</span>
-                        <span className="text-[#e0bec6]">•</span>
-                        {salon.rating > 0 ? (
-                          <span className="inline-flex items-center gap-0.5 text-[#26181c] font-semibold text-[13px]">
-                            <span className="material-symbols-outlined text-[15px] text-amber-500 fill-current">star</span>
-                            {salon.rating}
-                            <span className="text-[12px] font-normal text-[#5a3f47]">({salon.reviewCount ?? salon.reviewsCount} reviews)</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center text-emerald-600 font-semibold text-[13px]">New</span>
-                        )}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[11px] text-[#5a3f47] font-medium">Starting from</p>
-                      <p className="text-[18px] font-bold text-[#e6007e]">₹{salon.startingPrice}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-1.5">
-                    {salon.genderCategory && (
-                      <span className="px-2.5 py-0.5 rounded-md bg-[#fde7f3] text-[#e6007e] text-[11px] font-semibold">
-                        {salon.genderCategory}
-                      </span>
+                <div className="p-4">
+                  <div className="flex justify-between items-start mb-1">
+                    <h3
+                      onClick={() => onSelectSalon(salon)}
+                      className="font-card-title text-card-title text-on-surface cursor-pointer hover:text-nexora-pink transition-colors"
+                    >
+                      {salon.name}
+                    </h3>
+                    {salon.rating > 0 ? (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="material-symbols-outlined text-warning-amber text-[16px] fill-1">star</span>
+                        <span className="text-metadata font-bold">{salon.rating}</span>
+                        <span className="text-metadata text-on-surface-variant">({salon.reviewCount ?? salon.reviewsCount})</span>
+                      </div>
+                    ) : (
+                      <span className="text-metadata font-bold text-success-emerald shrink-0">New</span>
                     )}
-                    {salon.tags.map((t) => (
-                      <span
-                        key={t}
-                        className="px-2 py-0.5 rounded-md bg-[#f6dce2] text-[#5a3f47] text-[11px] font-medium"
-                      >
-                        {t}
-                      </span>
-                    ))}
                   </div>
-
+                  <div className="flex items-center gap-1 text-on-surface-variant mb-2">
+                    <span className="material-symbols-outlined text-[14px]">location_on</span>
+                    <span className="text-metadata">
+                      {salon.area}
+                      {salon.distanceKm > 0 ? ` · ${salon.distanceKm} km` : ''}
+                    </span>
+                  </div>
+                  <p className="text-metadata text-on-surface-variant mb-4">
+                    {[salon.genderCategory, ...salon.tags.slice(0, 2)].filter(Boolean).join(' · ')}
+                  </p>
                   <button
                     onClick={() => onSelectSalon(salon)}
-                    className="mt-1 w-full h-11 bg-[#8e004b] text-white rounded-xl text-[14px] font-semibold shadow-sm hover:bg-[#e6007e] transition-all flex items-center justify-center gap-2 active:scale-95"
+                    className="w-full h-touch-target-min bg-primary text-on-primary font-button-text rounded-lg hover:bg-nexora-pink transition-colors cursor-pointer"
                   >
-                    Book Now
-                    <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+                    Book Appointment
                   </button>
                 </div>
               </div>
             );
           })
         ) : (
-          <div className="text-center py-12 bg-white rounded-2xl p-6 border border-[#e8e8e8]">
-            <span className="material-symbols-outlined text-[48px] text-[#e0bec6] mb-3">search_off</span>
-            <p className="font-bold text-[#26181c] text-[16px]">No salons found</p>
-            <p className="text-[#5a3f47] text-[13px] mt-1 mb-4">Try adjusting your filters to find what you're looking for.</p>
+          <div className="text-center py-12 bg-white rounded-2xl p-6 border border-outline-variant">
+            <span className="material-symbols-outlined text-[48px] text-outline-variant mb-3">search_off</span>
+            <p className="font-card-title text-on-surface text-[16px]">No salons found</p>
+            <p className="text-on-surface-variant text-[13px] mt-1 mb-4">Try adjusting your filters to find what you're looking for.</p>
             <button
               onClick={() => {
                 setSearchQuery('');
-                setSelectedGenderFilter('All');
-                setSelectedMinPrice(0);
-                setSelectedMaxPrice(5000);
-                setSelectedMinRating(0);
-                setSelectedDistance(10);
+                setSelectedCategory('All');
+                setActiveQuickFilters([]);
+                setSmartFilter('all');
               }}
-              className="h-10 px-6 bg-[#e6007e] text-white rounded-xl font-bold text-[13px] active:scale-95 transition-all"
+              className="h-10 px-6 bg-nexora-pink text-white rounded-xl font-bold text-[13px] active:scale-95 transition-all cursor-pointer"
             >
               Reset Filters
             </button>
@@ -415,39 +363,22 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
         )}
       </div>
 
-      {/* Floating Map View Button */}
-      <motion.button
-        initial={{ opacity: 0, y: 20, scale: 0.9 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-        onClick={() => {
-          setShowMapView(true);
-          setActiveSalonOnMap(filteredSalons[0] || salons[0]);
-        }}
-        className="fixed bottom-32 mb-safe left-1/2 -translate-x-1/2 h-12 px-6 bg-[#3c2c31] text-white rounded-full shadow-2xl flex items-center gap-2 text-[14px] font-bold z-40 cursor-pointer select-none"
-      >
-        <span className="material-symbols-outlined text-[20px]">map</span>
-        Map View
-      </motion.button>
-
-      {/* Map View Interactive Overlay */}
+      {/* Map View Overlay — stylized pin-drop graphic (no external map SDK) */}
       <AnimatePresence>
-        {showMapView && (
+        {viewMode === 'map' && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-[100] bg-[#3c2c31]/60 backdrop-blur-sm flex flex-col justify-end"
+            className="fixed inset-0 z-[100] bg-inverse-surface/60 backdrop-blur-sm flex flex-col justify-end"
           >
             <motion.div
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', stiffness: 320, damping: 32 }}
-              className="relative w-full h-full bg-[#f6f3f2] flex flex-col"
+              className="relative w-full h-full bg-surface-container-low flex flex-col"
             >
               {/* Top Map Bar */}
               <div className="absolute top-4 left-4 right-4 z-20 flex justify-between items-center">
@@ -457,48 +388,34 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                   transition={{ delay: 0.15 }}
                   className="bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl shadow-md flex items-center gap-2"
                 >
-                  <span className="material-symbols-outlined text-[#e6007e]">location_on</span>
-                  <span className="text-xs font-bold text-[#26181c]">Bandra West, Mumbai</span>
+                  <span className="material-symbols-outlined text-nexora-pink">location_on</span>
+                  <span className="text-xs font-bold text-on-surface">{userCity}</span>
                 </motion.div>
                 <motion.button
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
                   whileTap={{ scale: 0.9 }}
                   transition={{ delay: 0.15 }}
-                  onClick={() => setShowMapView(false)}
-                  className="w-10 h-10 rounded-full bg-white shadow-md flex items-center justify-center text-[#26181c] font-bold cursor-pointer"
+                  onClick={() => setViewMode('list')}
+                  className="w-10 h-10 rounded-full bg-white shadow-md flex items-center justify-center text-on-surface font-bold cursor-pointer"
                 >
                   <span className="material-symbols-outlined">close</span>
                 </motion.button>
               </div>
 
-              {/* Stylized Map View Graphic */}
-              <div className="relative flex-1 bg-[#eae6e5] overflow-hidden flex items-center justify-center">
-                {/* Map Grid Pattern */}
+              {/* Stylized Map Graphic */}
+              <div className="relative flex-1 bg-surface-container overflow-hidden flex items-center justify-center">
                 <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#8e004b_1px,transparent_1px)] [background-size:16px_16px]" />
-                
-                {/* Animated Map Pins for Salons */}
-                {salons.map((s, idx) => {
+                {filteredSalons.map((s, idx) => {
                   const isSelected = activeSalonOnMap?.id === s.id;
-                  // Pin offset coordinates for visual positioning
                   const topOffsets = ['30%', '50%', '40%', '65%'];
                   const leftOffsets = ['25%', '60%', '75%', '35%'];
-
                   return (
                     <motion.button
                       key={s.id}
                       initial={{ opacity: 0, scale: 0, y: -15 }}
-                      animate={{
-                        opacity: 1,
-                        scale: isSelected ? 1.25 : 1,
-                        y: 0,
-                      }}
-                      transition={{
-                        type: 'spring',
-                        stiffness: 380,
-                        damping: 24,
-                        delay: 0.1 + idx * 0.06,
-                      }}
+                      animate={{ opacity: 1, scale: isSelected ? 1.25 : 1, y: 0 }}
+                      transition={{ type: 'spring', stiffness: 380, damping: 24, delay: 0.1 + idx * 0.06 }}
                       whileHover={{ scale: isSelected ? 1.3 : 1.12 }}
                       whileTap={{ scale: 0.95 }}
                       onClick={() => setActiveSalonOnMap(s)}
@@ -509,25 +426,18 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                     >
                       <div
                         className={`px-2.5 py-1 rounded-full text-[11px] font-bold shadow-md flex items-center gap-1 transition-colors ${
-                          isSelected
-                            ? 'bg-[#e6007e] text-white ring-4 ring-[#e6007e]/30'
-                            : 'bg-white text-[#26181c]'
+                          isSelected ? 'bg-nexora-pink text-white ring-4 ring-nexora-pink/30' : 'bg-white text-on-surface'
                         }`}
                       >
                         <span>₹{s.startingPrice}</span>
                         <span className="text-[10px]">★{s.rating}</span>
                       </div>
-                      <div
-                        className={`w-3 h-3 rotate-45 -mt-1.5 transition-colors ${
-                          isSelected ? 'bg-[#e6007e]' : 'bg-white'
-                        }`}
-                      />
+                      <div className={`w-3 h-3 rotate-45 -mt-1.5 transition-colors ${isSelected ? 'bg-nexora-pink' : 'bg-white'}`} />
                     </motion.button>
                   );
                 })}
               </div>
 
-              {/* Bottom Salon Preview Card */}
               <AnimatePresence mode="wait">
                 {activeSalonOnMap && (
                   <motion.div
@@ -545,26 +455,23 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                         className="w-20 h-20 rounded-2xl object-cover shrink-0"
                       />
                       <div className="flex-1 min-w-0">
-                        <span className="text-[11px] font-bold text-[#e6007e] uppercase tracking-wider">
-                          {activeSalonOnMap.distanceKm} km away
-                        </span>
-                        <h4 className="text-base font-bold text-[#26181c] truncate">
-                          {activeSalonOnMap.name}
-                        </h4>
-                        <p className="text-xs text-[#5a3f47] truncate">{activeSalonOnMap.address}</p>
-                        <p className="text-xs font-bold text-[#8e004b] mt-1">
-                          From ₹{activeSalonOnMap.startingPrice}
-                        </p>
+                        {activeSalonOnMap.distanceKm > 0 && (
+                          <span className="text-[11px] font-bold text-nexora-pink uppercase tracking-wider">
+                            {activeSalonOnMap.distanceKm} km away
+                          </span>
+                        )}
+                        <h4 className="text-base font-bold text-on-surface truncate">{activeSalonOnMap.name}</h4>
+                        <p className="text-xs text-on-surface-variant truncate">{activeSalonOnMap.address}</p>
+                        <p className="text-xs font-bold text-primary mt-1">From ₹{activeSalonOnMap.startingPrice}</p>
                       </div>
                     </div>
-
                     <motion.button
                       whileTap={{ scale: 0.97 }}
                       onClick={() => {
-                        setShowMapView(false);
+                        setViewMode('list');
                         onSelectSalon(activeSalonOnMap);
                       }}
-                      className="w-full mt-3 h-11 bg-[#e6007e] text-white rounded-xl font-bold text-xs shadow-md cursor-pointer"
+                      className="w-full mt-3 h-11 bg-nexora-pink text-white rounded-xl font-bold text-xs shadow-md cursor-pointer"
                     >
                       Book Appointment
                     </motion.button>
