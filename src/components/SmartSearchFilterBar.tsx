@@ -38,11 +38,11 @@ export const SmartSearchFilterBar: React.FC<SmartSearchFilterBarProps> = ({
   return (
     <div className="flex flex-col gap-2.5 w-full">
       <div className="flex items-center justify-between gap-2 px-0.5">
-        <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#8c7077] flex items-center gap-1 shrink-0">
-          <span className="material-symbols-outlined text-[14px] text-[#e6007e]">auto_awesome</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-wider text-outline flex items-center gap-1 shrink-0">
+          <span className="material-symbols-outlined text-[14px] text-nexora-pink">auto_awesome</span>
           Smart Discovery Filters
         </span>
-        <span className="text-[10px] text-[#e6007e] font-bold bg-[#fde7f3] px-2.5 py-1 rounded-full border border-[#f3c2dc] shrink-0 whitespace-nowrap shadow-2xs">
+        <span className="text-[10px] text-nexora-pink font-bold bg-primary-container px-2.5 py-1 rounded-full border border-outline-variant shrink-0 whitespace-nowrap shadow-2xs">
           Real-Time Business Data
         </span>
       </div>
@@ -54,14 +54,14 @@ export const SmartSearchFilterBar: React.FC<SmartSearchFilterBarProps> = ({
           onClick={() => handleSelectFilter('all')}
           className={`px-3.5 py-2 min-h-[40px] rounded-xl text-[12px] font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 snap-start shrink-0 border select-none active:scale-95 ${
             activeFilter === 'all'
-              ? 'bg-[#26181c] text-white border-[#26181c] shadow-md ring-2 ring-[#26181c]/20'
-              : 'bg-white text-[#5a3f47] border-[#f0d8e2] hover:bg-[#fff0f3] hover:border-[#e0bec6]'
+              ? 'bg-on-surface text-white border-on-surface shadow-md ring-2 ring-on-surface/20'
+              : 'bg-white text-on-surface-variant border-outline-variant hover:bg-surface-container-low hover:border-outline-variant'
           }`}
         >
-          <span className={`material-symbols-outlined text-[17px] ${activeFilter === 'all' ? 'text-[#e6007e]' : 'text-[#8e004b]'}`}>
+          <span className={`material-symbols-outlined text-[17px] ${activeFilter === 'all' ? 'text-nexora-pink' : 'text-primary'}`}>
             grid_view
           </span>
-          <span className={activeFilter === 'all' ? 'text-white font-extrabold' : 'text-[#26181c] font-bold'}>
+          <span className={activeFilter === 'all' ? 'text-white font-extrabold' : 'text-on-surface font-bold'}>
             All Salons
           </span>
         </button>
@@ -72,7 +72,7 @@ export const SmartSearchFilterBar: React.FC<SmartSearchFilterBarProps> = ({
           onClick={() => handleSelectFilter('top-rated-city')}
           className={`px-3.5 py-2 min-h-[40px] rounded-xl text-[12px] font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 snap-start shrink-0 border relative select-none active:scale-95 ${
             activeFilter === 'top-rated-city'
-              ? 'bg-[#26181c] text-white border-amber-400 shadow-md ring-2 ring-amber-400/40'
+              ? 'bg-on-surface text-white border-amber-400 shadow-md ring-2 ring-amber-400/40'
               : 'bg-amber-50/90 text-amber-950 border-amber-300 hover:bg-amber-100/90 hover:border-amber-400 shadow-2xs'
           }`}
         >
@@ -91,12 +91,12 @@ export const SmartSearchFilterBar: React.FC<SmartSearchFilterBarProps> = ({
           onClick={() => handleSelectFilter('top-nexora')}
           className={`px-3.5 py-2 min-h-[40px] rounded-xl text-[12px] font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 snap-start shrink-0 border relative select-none active:scale-95 ${
             activeFilter === 'top-nexora'
-              ? 'bg-[#8e004b] text-white border-[#e6007e] shadow-md ring-2 ring-pink-400/40'
-              : 'bg-[#fff0f5] text-[#8e004b] border-[#fcd5e8] hover:bg-[#fde7f3] hover:border-[#f9b5d8] shadow-2xs'
+              ? 'bg-primary text-white border-nexora-pink shadow-md ring-2 ring-pink-400/40'
+              : 'bg-[#fff0f5] text-primary border-outline-variant hover:bg-primary-container hover:border-[#f9b5d8] shadow-2xs'
           }`}
         >
           <span className="text-[14px]">🏆</span>
-          <span className={activeFilter === 'top-nexora' ? 'text-white font-extrabold' : 'text-[#8e004b] font-extrabold'}>
+          <span className={activeFilter === 'top-nexora' ? 'text-white font-extrabold' : 'text-primary font-extrabold'}>
             Top Salon by Nexora
           </span>
           {activeFilter === 'top-nexora' && (

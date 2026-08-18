@@ -10,6 +10,7 @@
 
 import { Salon } from '../types';
 import GeoService from './geoService';
+import { RadiusOption as LocationRadiusOption } from './location/locationTypes';
 
 // ═══════════════════════════════════════
 // TYPES
@@ -21,7 +22,7 @@ export interface FilteredSalon extends Salon {
   sortScore: number;            // combined priority score
 }
 
-export type RadiusOption = 2 | 5 | 10;
+export type RadiusOption = LocationRadiusOption;
 
 export interface FilterResult {
   salons: FilteredSalon[];
@@ -127,6 +128,9 @@ export async function filterSalons(
   // Ensure GeoJSON is loaded
   try { await GeoService.loadCity(citySlug); } catch {}
 
+  // 'all' means no radius cap — treat as an effectively unlimited distance.
+  const effectiveRadiusKm = radiusKm === 'all' ? Number.POSITIVE_INFINITY : radiusKm;
+
   // Process all salons in parallel
   const processed: FilteredSalon[] = [];
 
@@ -185,8 +189,8 @@ export async function filterSalons(
   processed.sort((a, b) => a.sortScore - b.sortScore);
 
   // Filter by radius
-  const withinRadius = processed.filter(s => s.computedDistanceKm <= radiusKm);
-  const outsideRadius = processed.filter(s => s.computedDistanceKm > radiusKm);
+  const withinRadius = processed.filter(s => s.computedDistanceKm <= effectiveRadiusKm);
+  const outsideRadius = processed.filter(s => s.computedDistanceKm > effectiveRadiusKm);
 
   return {
     salons: withinRadius,

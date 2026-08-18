@@ -70,14 +70,14 @@ export const TopRatedSection: React.FC<TopRatedSectionProps> = ({
             ⭐
           </div>
           <div>
-            <h2 className="text-[17px] font-extrabold text-[#26181c] tracking-tight flex items-center gap-1.5">
+            <h2 className="text-[17px] font-extrabold text-on-surface tracking-tight flex items-center gap-1.5">
               Top Rated in {city}
               <span className="inline-flex items-center gap-0.5 text-[10px] font-extrabold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300">
                 <span className="material-symbols-outlined text-[12px] text-amber-600">verified</span>
                 Verified Reviews
               </span>
             </h2>
-            <p className="text-[11px] text-[#5a3f47]">
+            <p className="text-[11px] text-on-surface-variant">
               Ranked by verified customer appointments & recent activity
             </p>
           </div>
@@ -109,9 +109,9 @@ export const TopRatedSection: React.FC<TopRatedSectionProps> = ({
                     e.stopPropagation();
                     onToggleFavorite(salon.id);
                   }}
-                  className="w-7 h-7 rounded-full bg-amber-50 hover:bg-amber-100 text-[#8c7077] hover:text-[#e6007e] flex items-center justify-center transition-colors"
+                  className="w-7 h-7 rounded-full bg-amber-50 hover:bg-amber-100 text-outline hover:text-nexora-pink flex items-center justify-center transition-colors"
                 >
-                  <span className={`material-symbols-outlined text-[16px] ${isFav ? 'text-[#e6007e] fill-current' : ''}`}>
+                  <span className={`material-symbols-outlined text-[16px] ${isFav ? 'text-nexora-pink fill-current' : ''}`}>
                     favorite
                   </span>
                 </button>
@@ -133,10 +133,10 @@ export const TopRatedSection: React.FC<TopRatedSectionProps> = ({
                 </div>
 
                 <div className="flex flex-col flex-1 min-w-0">
-                  <h3 className="text-sm font-bold text-[#26181c] group-hover:text-[#e6007e] transition-colors truncate">
+                  <h3 className="text-sm font-bold text-on-surface group-hover:text-nexora-pink transition-colors truncate">
                     {salon.name}
                   </h3>
-                  <p className="text-[11px] text-[#5a3f47] truncate">
+                  <p className="text-[11px] text-on-surface-variant truncate">
                     {salon.area} • {salon.distanceKm} km
                   </p>
 
@@ -145,7 +145,7 @@ export const TopRatedSection: React.FC<TopRatedSectionProps> = ({
                       <span className="material-symbols-outlined text-[12px] text-amber-600 fill-current">star</span>
                       {salon.rating}
                     </div>
-                    <span className="text-[10px] text-[#8c7077] font-medium truncate">
+                    <span className="text-[10px] text-outline font-medium truncate">
                       ({verifiedCount} verified reviews)
                     </span>
                   </div>
@@ -154,8 +154,8 @@ export const TopRatedSection: React.FC<TopRatedSectionProps> = ({
 
               {/* Action row */}
               <div className="flex items-center justify-between mt-3 pt-2 border-t border-amber-100">
-                <span className="text-[11px] font-semibold text-[#5a3f47]">
-                  Starts at <strong className="text-[#26181c] font-extrabold">₹{salon.startingPrice}</strong>
+                <span className="text-[11px] font-semibold text-on-surface-variant">
+                  Starts at <strong className="text-on-surface font-extrabold">₹{salon.startingPrice}</strong>
                 </span>
 
                 <button
@@ -163,7 +163,7 @@ export const TopRatedSection: React.FC<TopRatedSectionProps> = ({
                     e.stopPropagation();
                     onSelectSalon(salon);
                   }}
-                  className="px-3 py-1 bg-[#26181c] hover:bg-[#e6007e] text-white text-[11px] font-bold rounded-xl transition-all active:scale-95 cursor-pointer flex items-center gap-1"
+                  className="px-3 py-1 bg-on-surface hover:bg-nexora-pink text-white text-[11px] font-bold rounded-xl transition-all active:scale-95 cursor-pointer flex items-center gap-1"
                 >
                   Book Now
                   <span className="material-symbols-outlined text-[12px]">arrow_forward</span>

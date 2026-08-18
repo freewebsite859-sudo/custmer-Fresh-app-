@@ -35,7 +35,7 @@ export const OfflineDashboardCard: React.FC<OfflineDashboardCardProps> = ({ book
         {onClose && (
           <button
             onClick={onClose}
-            className="p-2 mr-1 text-[#8c7077] hover:text-[#e6007e] hover:bg-[#fff0f2] rounded-full transition-colors active:scale-90"
+            className="p-2 mr-1 text-outline hover:text-nexora-pink hover:bg-surface-container-low rounded-full transition-colors active:scale-90"
             aria-label="Dismiss notification"
             title="Dismiss"
           >
@@ -54,18 +54,18 @@ export const OfflineDashboardCard: React.FC<OfflineDashboardCardProps> = ({ book
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
         {/* Status Icon Indicator */}
-        <div className="w-14 h-14 rounded-2xl bg-[#fff0f6] flex items-center justify-center text-[#e6007e] shrink-0 shadow-sm border border-[#fff5f9]">
+        <div className="w-14 h-14 rounded-2xl bg-[#fff0f6] flex items-center justify-center text-nexora-pink shrink-0 shadow-sm border border-[#fff5f9]">
           <CheckCircle2 size={28} strokeWidth={2} />
         </div>
         
         <div className="flex-1 min-w-0 w-full">
           {/* Header Section: Title and Location */}
           <div className="pr-24 sm:pr-0"> {/* Ensuring space for the badge on mobile */}
-            <h3 className="font-extrabold text-[18px] text-[#26181c] truncate leading-tight tracking-tight">
+            <h3 className="font-extrabold text-[18px] text-on-surface truncate leading-tight tracking-tight">
               {booking.salonName}
             </h3>
-            <div className="flex items-center gap-1.5 mt-2 text-[13px] text-[#5a3f47]">
-              <MapPin size={13} className="text-[#e6007e] shrink-0" />
+            <div className="flex items-center gap-1.5 mt-2 text-[13px] text-on-surface-variant">
+              <MapPin size={13} className="text-nexora-pink shrink-0" />
               <span className="truncate font-medium">{booking.locationArea}</span>
             </div>
           </div>
@@ -76,13 +76,13 @@ export const OfflineDashboardCard: React.FC<OfflineDashboardCardProps> = ({ book
           {/* Bottom Section: Date, Time, and Services */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 text-[13px] text-[#26181c] font-bold">
-                <Calendar size={15} className="text-[#e6007e] shrink-0" />
+              <div className="flex items-center gap-2 text-[13px] text-on-surface font-bold">
+                <Calendar size={15} className="text-nexora-pink shrink-0" />
                 <span className="tabular-nums">{booking.dateStr}</span>
               </div>
               <div className="w-1.5 h-1.5 rounded-full bg-[#f1f5f9] shrink-0" />
-              <div className="flex items-center gap-2 text-[13px] text-[#26181c] font-bold">
-                <Clock size={15} className="text-[#e6007e] shrink-0" />
+              <div className="flex items-center gap-2 text-[13px] text-on-surface font-bold">
+                <Clock size={15} className="text-nexora-pink shrink-0" />
                 <span className="tabular-nums">{booking.timeSlot}</span>
               </div>
             </div>
@@ -91,7 +91,7 @@ export const OfflineDashboardCard: React.FC<OfflineDashboardCardProps> = ({ book
               {booking.services.slice(0, 2).map((service, idx) => (
                 <div 
                   key={idx}
-                  className="px-2.5 py-1 bg-[#fff0f6] text-[#e6007e] rounded-lg text-[10px] font-bold border border-[#fee2ef] whitespace-nowrap uppercase tracking-wider"
+                  className="px-2.5 py-1 bg-[#fff0f6] text-nexora-pink rounded-lg text-[10px] font-bold border border-[#fee2ef] whitespace-nowrap uppercase tracking-wider"
                 >
                   {service.name}
                 </div>
