@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Screen } from '../types';
 import { LOGO_URL } from '../data/mockData';
@@ -18,6 +18,25 @@ interface HeaderProps {
   isSyncing?: boolean;
 }
 
+/** Inline SVG brand mark used as a graceful fallback if the logo image fails. */
+const NexoraBrandMark: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    viewBox="0 0 44 44"
+    className={className}
+    role="img"
+    aria-label="Nexora"
+  >
+    <defs>
+      <linearGradient id="nx-brand-grad" x1="0" y1="0" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stopColor="#e6007e" />
+        <stop offset="1" stopColor="#8e004b" />
+      </linearGradient>
+    </defs>
+    <circle cx="22" cy="22" r="21" fill="url(#nx-brand-grad)" />
+    <path d="M22 11c1.9 4.8 3.6 6.5 6 7.5-2.4 1-4.1 2.7-6 7.5-1.9-4.8-3.6-6.5-6-7.5 2.4-1 4.1-2.7 6-7.5z" fill="#ffffff" />
+  </svg>
+);
+
 export const Header: React.FC<HeaderProps> = ({
   currentScreen,
   title = 'Home',
@@ -30,6 +49,7 @@ export const Header: React.FC<HeaderProps> = ({
   userAvatar,
   isSyncing = false,
 }) => {
+  const [logoFailed, setLogoFailed] = useState(false);
   return (
     <header className="fixed top-0 w-full z-50 bg-white/85 backdrop-blur-2xl border-b border-[#e8e8e8]/50 pt-safe">
       <div className="flex items-center justify-between h-16 px-4 max-w-md mx-auto">
@@ -46,11 +66,16 @@ export const Header: React.FC<HeaderProps> = ({
 
           {currentScreen === 'home' && !showBack ? (
             <div className="flex items-center gap-2 overflow-hidden">
-              <img
-                src={LOGO_URL}
-                alt="Nexora Brand Logo"
-                className="h-9 w-auto object-contain shrink-0"
-              />
+              {logoFailed ? (
+                <NexoraBrandMark className="h-9 w-9 shrink-0" />
+              ) : (
+                <img
+                  src={LOGO_URL}
+                  alt="Nexora Brand Logo"
+                  onError={() => setLogoFailed(true)}
+                  className="h-9 w-auto object-contain shrink-0"
+                />
+              )}
               <div className="flex flex-col overflow-hidden">
                 {title && (
                   <span className="font-semibold text-[17px] text-[#26181c] tracking-tight leading-tight truncate">

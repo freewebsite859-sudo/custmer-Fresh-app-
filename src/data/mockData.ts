@@ -1,7 +1,7 @@
 import { CurrentLocation } from '../services/location/locationTypes';
 
-export const LOGO_URL = '/src/assets/images/nexora_logo_luxury_1785236781115.jpg';
-export const LOGO_SQUARE = '/src/assets/images/nexora_logo_luxury_1785236781115.jpg';
+export const LOGO_URL = '/icons/nexora-logo.svg';
+export const LOGO_SQUARE = '/icons/nexora-logo.svg';
 export const AVATAR_URL = 'https://lh3.googleusercontent.com/aida-public/AB6AXuBOG1KE6QycrqAoi7dvqGoKSboLCppWbW1iEIxfa-y3Kt9PqLCrLFbTlN81KwatwAqsjiP6pC5EuRgNifKMXn1jJAUtJmQ-OOnG2guAwtwASOf_UxNibUixlHs1-s_VNPq8I1Z01uqo7WtWFJW-AlR3Ev8MP7fqPsta3lByjgM0pUznoxoZ2wbsAu4nP1nMxUIMX-nkMAHauG1IaOLN7F1OVYtFUWyN_ii8Tg0neCdN1V-w_AlDNuC-zn5yePu84wt5QkuDxg4sjhM';
 export const BANNER_URL = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCn991u77TB1QyV1AdBOSD9Jub7f5x5unJ3YPA0BDgK3swZsZaLvaxP0ik4sGEXA7VftRQ0xH3pJa7JDlVtvEh0JM8d0DoCeAntUDfq8A2cY6hsssagHPGnI2grUSeAkB_iz_XM8HD4V9jad5jWs8vrm-0cQH4LPFfUKr0UGMUrs9ugln2A-o6bjCycqKyGC-a1w5q2FFt7GX_oMNAsUVXo4zV1SqldpGwYNedjEs3yZy84q1pDL_cWc56gd0Xb_U-UFmWot0yH4qw';
 export const LOCATION_PIN_URL = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCtvEyTkpLk9SfuFRowvBqe-LhfEaeJ4EN4EXFd2Jc4epPo3YNlLbrCphpf9KpbhCEo0tsRiMt2-1LeI-aXpINydWYomtYhZ_s1zEU4_AGYyiqCtk1zJvASOlrf7CbLPbRWNym2I7xXzeM-w6pIL5VEEhVwlX95f-PcuCRpVNHVCvvHXsG52VAnkK095w5oeD5Wo9ZB4e5GUZLI5RJBDKOLyEmXcddMzaB4lS4EpnFyKDwgDmALTaggwDYycO1gyubVkSMblxtSVxU';

@@ -61,6 +61,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   } = useGpsLocation();
 
   const [nearbyRadius, setNearbyRadius] = useState<RadiusOption>(10);
+  const [nearbyView, setNearbyView] = useState<'list' | 'map'>('list');
   const [gpsFilterResult, setGpsFilterResult] = useState<FilterResult | null>(null);
   const [gpsFilteredSalons, setGpsFilteredSalons] = useState<any[]>([]);
   const [isLocationSelectorOpen, setIsLocationSelectorOpen] = useState(false);
@@ -77,6 +78,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const [filterAudience, setFilterAudience] = useState<string>('All');
 
   const popularAreas = ['All', 'Malviya Nagar', 'Vaishali Nagar', 'C-Scheme', 'Raja Park', 'Mansarovar'];
+  // Suggested popular areas shown when the active location has 0 salons.
+  const suggestedAreas = ['Vaishali Nagar', 'Malviya Nagar', 'C-Scheme', 'Raja Park'];
   const sortOptions = ['Default', 'Price: Low to High', 'Price: High to Low', 'Highest Rated'];
   const audienceOptions = ['All', 'Unisex', 'Male / Men', 'Female / Women', 'Kids / Children'];
 
@@ -106,6 +109,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const carouselRef = React.useRef<HTMLDivElement>(null);
   const recCarouselRef = React.useRef<HTMLDivElement>(null);
   const categoryRef = React.useRef<HTMLDivElement>(null);
+  const curatedRef = React.useRef<HTMLDivElement>(null);
+
+  /** Flash-sale CTA: pre-filters to facials/skin and scrolls to the listings. */
+  const handleFlashSaleCTA = () => {
+    setSelectedCategory('Skin');
+    setSearchQuery('');
+    setSmartFilter('all');
+    setFilterArea('All');
+    setFilterAudience('All');
+    curatedRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   const handleScrollCarousel = (direction: 'left' | 'right') => {
     if (carouselRef.current) {
@@ -370,6 +384,41 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     return userBookings.find(b => b.status === 'CONFIRMED' || b.status === 'PENDING');
   }, [userBookings]);
 
+  // Top-rated salons city-wide — used as a fallback when a location/filter
+  // returns nothing, so users never see a blank "No shops" block.
+  const cityWideTopSalons = useMemo(() => {
+    return [...salons].sort(
+      (a, b) => (b.rating || 0) - (a.rating || 0) || (b.reviewCount || 0) - (a.reviewCount || 0),
+    );
+  }, [salons]);
+
+  // Popular services used for the new-user CTA (0 booking history).
+  const popularServiceSamples = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Array<{ name: string; category: string; price: number; salon: Salon }> = [];
+    for (const salon of cityWideTopSalons) {
+      for (const s of salon.services) {
+        const key = s.name.trim().toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ name: s.name, category: s.category || 'Beauty', price: s.price, salon });
+        if (out.length >= 4) return out;
+      }
+    }
+    return out;
+  }, [cityWideTopSalons]);
+
+  /** Clears every active filter so the default city-wide listing loads again. */
+  const resetAllFilters = (resetRadius = false) => {
+    setSelectedCategory('All');
+    setSearchQuery('');
+    setSmartFilter('all');
+    setSortBy('Default');
+    setFilterArea('All');
+    setFilterAudience('All');
+    if (resetRadius) setNearbyRadius(10);
+  };
+
   return (
     <div className="flex flex-col w-full max-w-md mx-auto gap-5 pb-40 pt-2">
       {/* Header Location & Search */}
@@ -451,31 +500,61 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* GPS Nearby Salons Section (Calculates distances using Haversine & sorts nearest first) */}
       {gpsState && (
         <section className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <span className="w-1 h-5 bg-[#e6007e] rounded-full" />
-              <h2 className="text-[16px] font-bold text-[#26181c]">Nearby Salons</h2>
+              <h2 className="text-[16px] font-bold text-[#26181c] whitespace-nowrap">Nearby Salons</h2>
               <span className="text-[11px] font-bold text-[#8c7077] bg-[#f8eff3] px-2 py-0.5 rounded-full">
                 {nearbySalonsList.length} found
               </span>
             </div>
 
-            {/* Radius Filters */}
-            <div className="flex items-center gap-1 bg-[#f8eff3] p-1 rounded-xl">
-              {([2, 5, 10, 'all'] as RadiusOption[]).map((r) => (
-                <button
-                  key={String(r)}
-                  onClick={() => setNearbyRadius(r)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                    nearbyRadius === r
-                      ? 'bg-[#e6007e] text-white shadow-xs'
-                      : 'text-[#5a3f47] hover:text-[#e6007e]'
-                  }`}
-                >
-                  {r === 'all' ? 'All' : `Within ${r} km`}
-                </button>
-              ))}
+            {/* Map / List View Toggle */}
+            <div className="flex items-center gap-0.5 bg-[#f8eff3] p-1 rounded-xl shrink-0" role="group" aria-label="Nearby salons view mode">
+              <button
+                onClick={() => setNearbyView('list')}
+                aria-pressed={nearbyView === 'list'}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  nearbyView === 'list'
+                    ? 'bg-[#e6007e] text-white shadow-xs'
+                    : 'text-[#5a3f47] hover:text-[#e6007e]'
+                }`}
+                title="List view"
+              >
+                <span className="material-symbols-outlined text-[14px]">view_list</span>
+                <span className="hidden xs:inline sm:inline">List</span>
+              </button>
+              <button
+                onClick={() => setNearbyView('map')}
+                aria-pressed={nearbyView === 'map'}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  nearbyView === 'map'
+                    ? 'bg-[#e6007e] text-white shadow-xs'
+                    : 'text-[#5a3f47] hover:text-[#e6007e]'
+                }`}
+                title="Map view"
+              >
+                <span className="material-symbols-outlined text-[14px]">map</span>
+                <span className="hidden xs:inline sm:inline">Map</span>
+              </button>
             </div>
+          </div>
+
+          {/* Radius Filters */}
+          <div className="flex items-center gap-1 bg-[#f8eff3] p-1 rounded-xl self-start">
+            {([2, 5, 10, 'all'] as RadiusOption[]).map((r) => (
+              <button
+                key={String(r)}
+                onClick={() => setNearbyRadius(r)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  nearbyRadius === r
+                    ? 'bg-[#e6007e] text-white shadow-xs'
+                    : 'text-[#5a3f47] hover:text-[#e6007e]'
+                }`}
+              >
+                {r === 'all' ? 'All' : `Within ${r} km`}
+              </button>
+            ))}
           </div>
 
           {/* Current GPS Accuracy Pill — never prints raw coordinates */}
@@ -491,97 +570,167 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             </span>
           </div>
 
-          {/* Nearby Salon Cards */}
+          {/* Nearby Salon Cards / Map View */}
           {nearbySalonsList.length > 0 ? (
-            <div className="flex flex-col gap-3.5">
-              {nearbySalonsList.slice(0, 6).map((salon) => {
-                const isFav = favorites.includes(salon.id);
-                return (
-                  <motion.div
-                    key={salon.id}
-                    layout
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="flex flex-col bg-white rounded-2xl shadow-xs border border-[#f0d8e2] overflow-hidden hover:shadow-md transition-shadow group"
-                  >
-                    <div
-                      className="relative w-full h-36 cursor-pointer overflow-hidden"
+            nearbyView === 'map' ? (
+              <div className="flex flex-col gap-3">
+                <div className="relative rounded-2xl overflow-hidden border border-[#f0d8e2] shadow-xs bg-[#f8eff3]">
+                  <iframe
+                    title="Map of nearby salons"
+                    src={`https://www.google.com/maps?q=${encodeURIComponent(
+                      `${gpsState?.area || 'Jaipur'}, ${gpsState?.city || 'Jaipur'}`,
+                    )}&z=13&output=embed`}
+                    loading="lazy"
+                    referrerPolicy="no-referrer-when-downgrade"
+                    className="w-full h-64 border-0"
+                  />
+                  <div className="absolute bottom-2 left-2 bg-[#26181c]/85 backdrop-blur-sm text-white text-[11px] font-bold px-3 py-1 rounded-full shadow-md flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px] text-[#ffb0c8]">near_me</span>
+                    {nearbySalonsList.length} salons around {gpsState?.area || 'you'}
+                  </div>
+                </div>
+                <div className="flex gap-3 overflow-x-auto pt-1 pb-1 scrollbar-none -mx-4 px-4 snap-x snap-mandatory">
+                  {nearbySalonsList.slice(0, 6).map((salon) => (
+                    <button
+                      key={salon.id}
                       onClick={() => onSelectSalon(salon)}
+                      className="min-w-[150px] max-w-[150px] shrink-0 snap-start bg-white rounded-2xl border border-[#f0d8e2] overflow-hidden hover:border-[#e6007e] transition-colors text-left cursor-pointer group"
                     >
-                      <img
-                        src={salon.image}
-                        alt={salon.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                      />
-                      {/* Distance Badge */}
-                      <div className="absolute top-3 left-3 bg-[#e6007e] text-white text-[11px] font-extrabold px-2.5 py-1 rounded-full shadow-md flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[13px]">near_me</span>
-                        {salon.formattedDistance || `${salon.distanceKm} km`}
+                      <img src={salon.image} alt={salon.name} className="w-full h-20 object-cover" />
+                      <div className="p-2.5">
+                        <p className="text-[12px] font-bold text-[#26181c] truncate leading-tight group-hover:text-[#e6007e] transition-colors">{salon.name}</p>
+                        <p className="text-[10px] text-[#8c7077] mt-0.5 truncate flex items-center gap-0.5">
+                          <span className="material-symbols-outlined text-[11px] text-[#e6007e]">star</span>
+                          {salon.rating > 0 ? salon.rating : 'New'}
+                        </p>
                       </div>
-
-                      {/* Favorite Button */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onToggleFavorite(salon.id);
-                        }}
-                        className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/90 backdrop-blur-xs flex items-center justify-center text-[#8c7077] hover:text-[#e6007e] transition-colors"
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3.5">
+                {nearbySalonsList.slice(0, 6).map((salon) => {
+                  const isFav = favorites.includes(salon.id);
+                  return (
+                    <motion.div
+                      key={salon.id}
+                      layout
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="flex flex-col bg-white rounded-2xl shadow-xs border border-[#f0d8e2] overflow-hidden hover:shadow-md transition-shadow group"
+                    >
+                      <div
+                        className="relative w-full h-36 cursor-pointer overflow-hidden"
+                        onClick={() => onSelectSalon(salon)}
                       >
-                        <span className={`material-symbols-outlined text-[18px] ${isFav ? 'text-[#e6007e] fill-current' : ''}`}>
-                          favorite
-                        </span>
-                      </button>
-                    </div>
-
-                    <div className="p-3.5 flex flex-col gap-2">
-                      <div className="flex justify-between items-start gap-2">
-                        <div>
-                          <h3
-                            onClick={() => onSelectSalon(salon)}
-                            className="text-[16px] font-bold text-[#26181c] cursor-pointer hover:text-[#e6007e] transition-colors line-clamp-1"
-                          >
-                            {salon.name}
-                          </h3>
-                          <p className="text-[12px] text-[#5a3f47] flex items-center gap-1 mt-0.5">
-                            <span className="material-symbols-outlined text-[14px] text-[#e6007e]">location_on</span>
-                            {salon.area}
-                          </p>
+                        <img
+                          src={salon.image}
+                          alt={salon.name}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        />
+                        {/* Distance Badge */}
+                        <div className="absolute top-3 left-3 bg-[#e6007e] text-white text-[11px] font-extrabold px-2.5 py-1 rounded-full shadow-md flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[13px]">near_me</span>
+                          {salon.formattedDistance || `${salon.distanceKm} km`}
                         </div>
 
-                        {salon.rating > 0 && (
-                          <div className="flex items-center gap-1 bg-[#ffe8ed] px-2 py-0.5 rounded-lg shrink-0">
-                            <span className="material-symbols-outlined text-[14px] text-amber-500">star</span>
-                            <span className="text-[12px] font-bold text-[#26181c]">{salon.rating}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between pt-2 border-t border-[#fce2e7]">
-                        <span className="text-[12px] font-extrabold text-[#26181c]">
-                          From ₹{salon.startingPrice}
-                        </span>
+                        {/* Favorite Button */}
                         <button
-                          onClick={() => onSelectSalon(salon)}
-                          className="px-4 py-1.5 bg-[#8e004b] hover:bg-[#e6007e] text-white text-[12px] font-bold rounded-xl transition-all active:scale-95 cursor-pointer shadow-2xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleFavorite(salon.id);
+                          }}
+                          className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/90 backdrop-blur-xs flex items-center justify-center text-[#8c7077] hover:text-[#e6007e] transition-colors"
                         >
-                          Book
+                          <span className={`material-symbols-outlined text-[18px] ${isFav ? 'text-[#e6007e] fill-current' : ''}`}>
+                            favorite
+                          </span>
                         </button>
                       </div>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
+
+                      <div className="p-3.5 flex flex-col gap-2">
+                        <div className="flex justify-between items-start gap-2">
+                          <div>
+                            <h3
+                              onClick={() => onSelectSalon(salon)}
+                              className="text-[16px] font-bold text-[#26181c] cursor-pointer hover:text-[#e6007e] transition-colors line-clamp-1"
+                            >
+                              {salon.name}
+                            </h3>
+                            <p className="text-[12px] text-[#5a3f47] flex items-center gap-1 mt-0.5">
+                              <span className="material-symbols-outlined text-[14px] text-[#e6007e]">location_on</span>
+                              {salon.area}
+                            </p>
+                          </div>
+
+                          {salon.rating > 0 && (
+                            <div className="flex items-center gap-1 bg-[#ffe8ed] px-2 py-0.5 rounded-lg shrink-0">
+                              <span className="material-symbols-outlined text-[14px] text-amber-500">star</span>
+                              <span className="text-[12px] font-bold text-[#26181c]">{salon.rating}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-[#fce2e7]">
+                          <span className="text-[12px] font-extrabold text-[#26181c]">
+                            From ₹{salon.startingPrice}
+                          </span>
+                          <button
+                            onClick={() => onSelectSalon(salon)}
+                            className="px-4 py-1.5 bg-[#8e004b] hover:bg-[#e6007e] text-white text-[12px] font-bold rounded-xl transition-all active:scale-95 cursor-pointer shadow-2xs"
+                          >
+                            Book
+                          </button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            )
           ) : (
-            <div className="p-6 bg-white rounded-2xl border border-slate-200 text-center flex flex-col items-center gap-2">
+            <div className="p-5 bg-white rounded-2xl border border-[#f0d8e2] shadow-xs flex flex-col items-center text-center gap-3">
               <span className="material-symbols-outlined text-[32px] text-[#e0bec6]">location_off</span>
-              <p className="text-[13px] font-bold text-[#26181c]">{nearbyRadius === 'all' ? 'No salons found nearby' : `No salons found within ${nearbyRadius} km`}</p>
-              <button
-                onClick={() => setNearbyRadius('all')}
-                className="mt-1 px-4 py-1.5 bg-[#e6007e] text-white text-xs font-bold rounded-xl cursor-pointer"
-              >
-                Show All Salons
-              </button>
+              <div>
+                <p className="text-[13px] font-bold text-[#26181c]">
+                  {nearbyRadius === 'all'
+                    ? 'No salons found in this area'
+                    : `No salons found within ${nearbyRadius} km`}
+                </p>
+                <p className="text-[12px] text-[#5a3f47] mt-1">
+                  {gpsState?.area
+                    ? `We couldn't find salons near ${gpsState.area}.`
+                    : 'We could not find any salons near you.'}
+                </p>
+              </div>
+
+              <div className="flex flex-col items-center gap-1.5 w-full">
+                <span className="text-[11px] font-bold text-[#8c7077] uppercase tracking-wider">
+                  Popular areas nearby
+                </span>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {suggestedAreas.map((area) => (
+                    <button
+                      key={area}
+                      onClick={() => gpsSetManual(area, '', '')}
+                      className="px-3 py-1.5 bg-[#fde7f3] hover:bg-[#ffd9e2] text-[#8e004b] text-[12px] font-bold rounded-full border border-[#fcd5e8] transition-colors cursor-pointer"
+                    >
+                      {area}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {cityWideTopSalons.length > 0 && (
+                <button
+                  onClick={() => { resetAllFilters(); setNearbyRadius(10); }}
+                  className="mt-1 w-full px-4 py-2.5 bg-[#e6007e] text-white text-xs font-bold rounded-xl hover:bg-[#b90064] transition-colors cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <span className="material-symbols-outlined text-[16px]">star</span>
+                  Browse Top Salons in {gpsState?.city || 'Jaipur'}
+                </button>
+              )}
             </div>
           )}
         </section>
@@ -802,11 +951,36 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               className="flex gap-3 overflow-x-auto pt-2 pb-1 scrollbar-none -mx-4 px-4 sm:-mx-5 sm:px-5 scroll-smooth snap-x snap-mandatory"
             >
               {frequentServices.length === 0 && (
-                <div className="w-full shrink-0 flex flex-col items-center justify-center text-center py-8 px-6 gap-2">
-                  <span className="material-symbols-outlined text-[28px] text-[#e0bec6]">history</span>
-                  <p className="text-[13px] font-semibold text-[#8c7077] leading-5">
-                    Your frequently booked services will appear here after your first appointment.
-                  </p>
+                <div className="w-full shrink-0 flex flex-col items-center justify-center text-center py-8 px-6 gap-3 bg-gradient-to-br from-[#fff2f6] to-[#fde7f3] rounded-2xl border border-[#fcd5e8]">
+                  <span className="material-symbols-outlined text-[30px] text-[#e6007e]">auto_awesome</span>
+                  <div>
+                    <p className="text-[14px] font-extrabold text-[#26181c] leading-tight">
+                      Explore Popular Services
+                    </p>
+                    <p className="text-[12px] text-[#5a3f47] mt-1 leading-5">
+                      New here? Discover the most-loved treatments across {gpsState?.city || 'Jaipur'}.
+                    </p>
+                  </div>
+                  {popularServiceSamples.length > 0 && (
+                    <div className="flex flex-wrap justify-center gap-1.5">
+                      {popularServiceSamples.map((sample) => (
+                        <button
+                          key={sample.name}
+                          onClick={() => onNavigate('search')}
+                          className="px-3 py-1.5 bg-white hover:bg-[#ffd9e2] text-[#8e004b] text-[11px] font-bold rounded-full border border-[#f3c2dc] transition-colors cursor-pointer"
+                        >
+                          {sample.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => setTopTab('trending')}
+                    className="mt-1 px-5 py-2 bg-[#e6007e] hover:bg-[#b90064] text-white text-xs font-bold rounded-xl shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">local_fire_department</span>
+                    View Trending Services
+                  </button>
                 </div>
               )}
               {frequentServices.map((item, idx) => {
@@ -970,11 +1144,23 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             <span className="material-symbols-outlined text-[14px] text-white">local_fire_department</span>
             <span className="text-[12px] text-white font-semibold tracking-wider uppercase">Flash Sale</span>
           </div>
-          <div className="flex flex-col">
-            <h3 className="text-[24px] text-white font-bold leading-tight drop-shadow-sm">
-              Flat 30% Off
-            </h3>
-            <p className="text-[15px] text-white/90 font-medium">On premium facials today</p>
+          <div className="flex flex-col items-start gap-2">
+            <div>
+              <h3 className="text-[24px] text-white font-bold leading-tight drop-shadow-sm">
+                Flat 30% Off
+              </h3>
+              <p className="text-[15px] text-white/90 font-medium">On premium facials today</p>
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleFlashSaleCTA();
+              }}
+              className="mt-1 px-4 py-2 bg-white text-[#b80663] font-bold text-[12px] rounded-full shadow-md hover:bg-[#fff0f5] active:scale-95 transition-all cursor-pointer flex items-center gap-1.5"
+            >
+              <span className="material-symbols-outlined text-[16px]">bolt</span>
+              Book Now
+            </button>
           </div>
         </div>
       </section>
@@ -1071,7 +1257,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             exit="exit"
             className="flex gap-4 overflow-x-auto pt-2 pb-2 scrollbar-none -mx-4 px-4 sm:-mx-5 sm:px-5 scroll-smooth snap-x snap-mandatory"
           >
-            {recommendedSalons.slice(0, 5).map(({ salon, matchPercentage, primaryReason, secondaryReason }) => {
+            {recommendedSalons.length > 0 ? recommendedSalons.slice(0, 5).map(({ salon, matchPercentage, primaryReason, secondaryReason }) => {
               const isFav = favorites.includes(salon.id);
               return (
                 <motion.div
@@ -1178,13 +1364,27 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   </div>
                 </motion.div>
               );
-            })}
+            }) : (
+              <div className="w-full shrink-0 flex flex-col items-center justify-center text-center py-10 px-6 gap-3">
+                <span className="material-symbols-outlined text-[30px] text-[#e0bec6]">auto_awesome</span>
+                <div>
+                  <p className="text-[14px] font-bold text-[#26181c]">Top Rated in {gpsState?.city || 'Jaipur'}</p>
+                  <p className="text-[12px] text-[#5a3f47] mt-1">We're gathering great picks for you — check back in a moment.</p>
+                </div>
+                <button
+                  onClick={() => onNavigate('search')}
+                  className="mt-1 px-5 py-2 bg-[#e6007e] text-white text-xs font-bold rounded-xl hover:bg-[#b90064] transition-colors cursor-pointer"
+                >
+                  Browse Salons
+                </button>
+              </div>
+            )}
           </motion.div>
         </AnimatePresence>
       </section>
 
       {/* Curated For You */}
-      <section className="flex flex-col gap-4">
+      <section ref={curatedRef} className="flex flex-col gap-4 scroll-mt-20">
         <div className="flex items-center justify-between">
           <h2 className="text-[20px] font-bold text-[#26181c] tracking-tight">Curated For You</h2>
           <button
@@ -1200,8 +1400,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             Array.from({ length: 4 }).map((_, i) => <SalonCardSkeleton key={i} />)
           ) : (
             <AnimatePresence>
-              {filteredSalons.length > 0 ? (
-                filteredSalons.map((salon) => {
+              {filteredSalons.length > 0 || cityWideTopSalons.length > 0 ? (
+                (filteredSalons.length > 0 ? filteredSalons : cityWideTopSalons).map((salon) => {
                   const isFav = favorites.includes(salon.id);
                   return (
                     <motion.div
@@ -1327,22 +1527,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   <h3 className="font-bold text-[#26181c] text-lg">
                     {selectedCategory !== 'All' 
                       ? 'No shops available in this category.'
-                      : 'No shops available'}
+                      : 'No salons available right now'}
                   </h3>
                   <p className="text-sm text-[#5a3f47] mt-1 max-w-[280px] mx-auto">
                     {selectedCategory !== 'All' 
-                      ? `There are no businesses listed under "${selectedCategory}" right now.`
-                      : 'No salons found matching your criteria.'}
+                      ? `There are no businesses listed under "${selectedCategory}" right now. Try a different category.`
+                      : 'No salons found matching your filters. Reset to see the full city-wide listing.'}
                   </p>
                   <button
-                    onClick={() => {
-                      setSelectedCategory('All');
-                      setSearchQuery('');
-                      setSmartFilter('all');
-                      setSortBy('Default');
-                      setFilterArea('All');
-                      setFilterAudience('All');
-                    }}
+                    onClick={() => resetAllFilters()}
                     className="mt-6 px-6 py-2.5 bg-[#e6007e] text-white rounded-xl text-sm font-bold cursor-pointer active:scale-95 transition-all shadow-md shadow-[#e6007e]/20"
                   >
                     Reset Filters
@@ -1462,11 +1655,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               {/* Action Buttons */}
               <div className="p-4 border-t border-[#e8e8e8] flex gap-3 bg-white">
                 <button
-                  onClick={() => {
-                    setSortBy('Default');
-                    setFilterArea('All');
-                    setFilterAudience('All');
-                  }}
+                  onClick={() => resetAllFilters()}
                   className="flex-1 py-3 bg-[#fcf9f8] text-[#5a3f47] font-bold rounded-xl border border-[#e8e8e8] hover:bg-[#fde7f3] hover:text-[#e6007e] transition-colors cursor-pointer"
                 >
                   Clear All
