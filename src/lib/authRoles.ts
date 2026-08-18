@@ -29,6 +29,5 @@ export function roleLabel(value: string | null | undefined): string {
 
 export function dashboardScreenForRole(role: PlatformRole): Screen {
   if (role === 'business_user') return 'owner-dashboard';
-  if (role === 'growth_partner') return 'gp-dashboard';
   return 'home';
 }

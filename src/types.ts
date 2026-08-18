@@ -18,7 +18,6 @@ export type Screen =
   | 'support' 
   | 'settings' 
   | 'owner-dashboard' 
-  | 'gp-dashboard' 
   | 'terms' 
   | 'privacy' 
   | 'cancellation';
