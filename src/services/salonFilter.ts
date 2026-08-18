@@ -121,7 +121,7 @@ export async function filterSalons(
   userLat: number,
   userLng: number,
   detectedArea: string,
-  radiusKm: RadiusOption = 10,
+  radiusKm: number = 10,
   citySlug = 'jaipur'
 ): Promise<FilterResult> {
   // Ensure GeoJSON is loaded

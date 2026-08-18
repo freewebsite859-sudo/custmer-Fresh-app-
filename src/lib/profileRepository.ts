@@ -133,6 +133,85 @@ export async function updateProfile(
   return data as CustomerProfile;
 }
 
+/**
+ * Builds a personalized fallback avatar URL (user initials) via the UI Avatars
+ * API. Used for Email/Phone sign-ups that have no provider photo. Returns ''
+ * when there is no usable name so callers can fall through to an icon.
+ */
+export function buildInitialsAvatarUrl(name: string | null | undefined): string {
+  const clean = (name ?? '').trim();
+  if (!clean) return '';
+  return (
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(clean)}` +
+    `&size=256&background=random&bold=true&format=png`
+  );
+}
+
+/**
+ * Normalizes an international phone number into the app's canonical display
+ * format (`+91 98765 43210`). Accepts 10-digit and 12-digit (91-prefixed)
+ * numbers; other inputs are returned trimmed when they look like a phone.
+ */
+export function normalizePhoneNumber(raw: string | null | undefined): string | null {
+  const digits = (raw ?? '').replace(/[^0-9]/g, '');
+  if (!digits) return null;
+  if (digits.length === 10) return `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
+  if (digits.length === 12 && digits.startsWith('91')) {
+    return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
+  }
+  const trimmed = (raw ?? '').trim();
+  return trimmed.length >= 8 ? trimmed : null;
+}
+
+/**
+ * Ensures the shared profile row has its default photo + phone set, pulling
+ * from the OAuth/user-metadata payload when available and otherwise generating
+ * an initials avatar. Only fills fields that are currently missing — it never
+ * overwrites a value the user has already saved.
+ */
+export async function ensureProfileDefaults(
+  client: SupabaseClient,
+  userId: string,
+  source: {
+    fullName?: string | null;
+    phone?: string | null;
+    oauthAvatarUrl?: string | null;
+  },
+): Promise<CustomerProfile | null> {
+  const profile = await loadProfile(client, userId).catch(() => null);
+  if (!profile) return null;
+
+  const patch: ProfilePatch = {};
+
+  if (!profile.photo_url) {
+    const avatar =
+      (source.oauthAvatarUrl ?? '').trim() ||
+      buildInitialsAvatarUrl(profile.full_name || source.fullName);
+    if (avatar) patch.photo_url = avatar;
+  }
+
+  if (!profile.phone) {
+    const phone =
+      normalizePhoneNumber(source.phone) ||
+      normalizePhoneNumber(profile.phone);
+    if (phone) patch.phone = phone;
+  }
+
+  if (!profile.full_name && (source.fullName ?? '').trim()) {
+    patch.full_name = (source.fullName ?? '').trim();
+  }
+
+  if (Object.keys(patch).length === 0) return profile;
+
+  try {
+    return await updateProfile(client, userId, patch);
+  } catch (e) {
+    // Never block login just because profile defaults could not be seeded.
+    console.warn('Profile defaults seed notice:', (e as Error)?.message || e);
+    return profile;
+  }
+}
+
 const AVATAR_BUCKET = 'avatars';
 const EXT_BY_TYPE: Record<string, string> = {
   'image/jpeg': 'jpg',

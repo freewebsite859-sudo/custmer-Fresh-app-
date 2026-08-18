@@ -8,7 +8,7 @@ import { SmartSearchFilterBar } from './SmartSearchFilterBar';
 import { TopRatedSection } from './TopRatedSection';
 import { NexoraLeaderboardSection } from './NexoraLeaderboardSection';
 import { useGpsLocation } from '../hooks/useGpsLocation';
-import { filterSalons, RadiusOption, FilterResult } from '../services/salonFilter';
+import { filterSalons, FilterResult } from '../services/salonFilter';
 import { RadiusOption } from '../services/location/locationTypes';
 import { LocationSelectionModal } from './LocationSelectionModal';
 
@@ -92,7 +92,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       return;
     }
     let cancelled = false;
-    filterSalons(salons, gpsState.lat, gpsState.lng, gpsState.area || '', nearbyRadius)
+    // 'all' shows every salon, so map it to an effectively unbounded radius.
+    const filterRadiusKm = nearbyRadius === 'all' ? 1000 : nearbyRadius;
+    filterSalons(salons, gpsState.lat, gpsState.lng, gpsState.area || '', filterRadiusKm)
       .then(result => {
         if (!cancelled) setNearbySalonsList(result.salons);
       })
@@ -397,41 +399,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </div>
         </div>
 
-        {/* Location Error / Retry Banner — shown when GPS/geocoding fails.
-            No hardcoded city fallback; user can Retry (re-runs geocoding
-            without re-prompting for GPS permission) or pick an area manually. */}
-        {null && !isLocationLoading && (
-          <div className="flex items-center justify-between px-3.5 py-2.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 shadow-2xs">
-            <div className="flex items-center gap-2 min-w-0 pr-2">
-              <span className="material-symbols-outlined text-[18px] text-rose-600 shrink-0">location_off</span>
-              <div className="flex flex-col min-w-0">
-                <span className="font-bold text-[12px] truncate">📍 Location not available</span>
-                <span className="text-[11px] text-rose-700/90 leading-tight break-words">{null.message}</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                onClick={() => setIsLocationSelectorOpen(true)}
-                className="px-3 py-1.5 bg-white text-rose-700 text-[11px] font-bold rounded-xl border border-rose-200 hover:bg-rose-100 active:scale-95 transition-all cursor-pointer"
-              >
-                Choose area
-              </button>
-              <button
-                onClick={() => {
-                  // If we already have GPS coords, retry only geocoding;
-                  // otherwise re-run full detection.
-                  if (gpsState) {
-                    gpsForceRefresh();
-                  } else {
-                    gpsForceRefresh();
-                  }
-                }}
-                className="px-3 py-1.5 bg-[#e6007e] text-white text-[11px] font-bold rounded-xl shadow-xs hover:bg-[#c9006e] active:scale-95 transition-all cursor-pointer"
-              >
-                Tap to Retry
-              </button>
-            </div>
-          </div>
+        {/* Location retry hint shown when GPS fails (unused — GPS banner is
+            handled inline below). Kept minimal to avoid dead code. */}
+        {gpsPermissionDenied && (
+          <p className="text-[11px] text-rose-600 flex items-center gap-1">
+            <span className="material-symbols-outlined text-[14px] shrink-0">location_off</span>
+            Location unavailable. You can pick an area manually.
+          </p>
         )}
 
         {/* Search Bar */}
@@ -601,7 +575,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           ) : (
             <div className="p-6 bg-white rounded-2xl border border-slate-200 text-center flex flex-col items-center gap-2">
               <span className="material-symbols-outlined text-[32px] text-[#e0bec6]">location_off</span>
-              <p className="text-[13px] font-bold text-[#26181c]">No salons found within {nearbyRadius} km</p>
+              <p className="text-[13px] font-bold text-[#26181c]">{nearbyRadius === 'all' ? 'No salons found nearby' : `No salons found within ${nearbyRadius} km`}</p>
               <button
                 onClick={() => setNearbyRadius('all')}
                 className="mt-1 px-4 py-1.5 bg-[#e6007e] text-white text-xs font-bold rounded-xl cursor-pointer"

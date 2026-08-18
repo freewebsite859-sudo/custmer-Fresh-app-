@@ -4,7 +4,7 @@ import { Screen, Salon, Service, Staff, Booking, UserLocation, AppNotification, 
 import { INITIAL_LOCATION } from './data/mockData';
 import { fetchPublicSalons } from './lib/salonRepository';
 import { createCustomerBooking, createAdvanceOrder, loadRazorpayCheckout, openRazorpayAdvanceCheckout, listCustomerBookings, subscribeToCustomerBookings, CustomerBookingRow } from './lib/bookingRepository';
-import { loadProfile, waitForProfile, updateProfile, uploadAvatar, avatarUrlWithVersion, subscribeToProfile, CustomerProfile, ProfilePatch } from './lib/profileRepository';
+import { loadProfile, waitForProfile, updateProfile, uploadAvatar, avatarUrlWithVersion, subscribeToProfile, ensureProfileDefaults, CustomerProfile, ProfilePatch } from './lib/profileRepository';
 import { loadFavorites, setFavorite, subscribeToFavorites } from './lib/favoritesRepository';
 import { loadReviews, saveReview, subscribeToReviews } from './lib/reviewsRepository';
 import { loadSettings, saveSettings, settingsFromLegacyLocalStorage, SETTINGS_DEFAULTS } from './lib/settingsRepository';
@@ -408,6 +408,19 @@ export default function App() {
       try {
         let prof: CustomerProfile | null = null;
         try { prof = await loadProfile(client, uid); } catch (e: any) { console.warn('Profile load notice:', e?.message || e); }
+        if (cancelled) return;
+        // Auto-fill the default photo + phone (Google/OAuth avatar, initials
+        // fallback, verified/entered mobile) for any user that lacks them.
+        const meta = user?.user_metadata ?? {};
+        try {
+          prof = await ensureProfileDefaults(client, uid, {
+            fullName: meta?.full_name ?? meta?.name ?? null,
+            phone: meta?.phone ?? meta?.mobile ?? user?.phone ?? null,
+            oauthAvatarUrl: meta?.avatar_url ?? meta?.picture ?? meta?.avatar ?? null,
+          });
+        } catch (e: any) {
+          console.warn('Profile defaults notice:', e?.message || e);
+        }
         if (cancelled) return;
         setProfile(prof);
 
