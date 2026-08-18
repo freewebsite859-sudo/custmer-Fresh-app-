@@ -41,7 +41,6 @@ import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { InstallApp } from './components/InstallApp';
 import { Modal } from './components/Modal';
 import { OwnerDashboard } from './components/OwnerDashboard';
-import { GrowthPartnerDashboard } from './components/GrowthPartnerDashboard';
 import { LegalScreen } from './components/LegalScreen';
 import { dashboardScreenForRole, isPlatformRole } from './lib/authRoles';
 
@@ -891,8 +890,6 @@ export default function App() {
         return 'App Settings';
       case 'owner-dashboard':
         return 'Owner Dashboard';
-      case 'gp-dashboard':
-        return 'Partner Dashboard';
       case 'terms':
         return 'Terms & Conditions';
       case 'privacy':
@@ -1203,17 +1200,6 @@ export default function App() {
             />
           )}
 
-          {currentScreen === 'gp-dashboard' && (
-            <GrowthPartnerDashboard 
-              user={user} 
-              onNavigate={setCurrentScreen}
-              onLogout={async () => {
-                setUser(null);
-                await supabase?.auth.signOut();
-              }}
-            />
-          )}
-
           {currentScreen === 'terms' && (
             <LegalScreen type="terms" onBack={handleBack} />
           )}
@@ -1226,7 +1212,7 @@ export default function App() {
             <LegalScreen type="cancellation" onBack={handleBack} />
           )}
 
-          {!['welcome', 'home', 'search', 'salon-detail', 'checkout', 'bookings', 'favourites', 'rewards', 'profile', 'saved-addresses', 'support', 'settings', 'owner-dashboard', 'gp-dashboard', 'terms', 'privacy', 'cancellation'].includes(currentScreen) && (
+          {!['welcome', 'home', 'search', 'salon-detail', 'checkout', 'bookings', 'favourites', 'rewards', 'profile', 'saved-addresses', 'support', 'settings', 'owner-dashboard', 'terms', 'privacy', 'cancellation'].includes(currentScreen) && (
             <HomeScreen
               salons={salons}
               salonsLoading={salonsLoading}
